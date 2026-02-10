@@ -52,6 +52,9 @@ echo.
 echo ===================================================
 if %errorlevel% equ 0 (
     echo [SUCCESS] Code pushed successfully to GitHub!
+    echo Opening repository in your browser...
+    timeout /t 3 >nul
+    start %repo_url%
 ) else (
     echo [ERROR] Failed to push code. Please check the error messages above.
 )
