@@ -32,6 +32,10 @@ def save_scavenged_data(company_name, new_data):
         return {"status": "skipped", "reason": "no_credentials"}
 
     try:
+        # Robustness: Strip whitespace
+        clean_name = company_name.strip()
+        print(f"DEBUG: Saving to '{clean_name}'...")
+        
         # 1. Prepare Data
         # Ensure we handled lists correctly (join with comma as requested)
         emails = new_data.get("emails", [])
@@ -48,9 +52,9 @@ def save_scavenged_data(company_name, new_data):
         if isinstance(address, list):
              address = ", ".join(address)
 
-        # 2. Construct Payload matching 'mousa' table schema
+        # 2. Construct Payload
         payload = {
-            "buyer_name": company_name,  # Primary Key / Unique Identifier
+            "buyer_name": clean_name,  # Primary Key
             "email": email_str,
             "phone": phone_str,
             "website": website,
@@ -59,7 +63,6 @@ def save_scavenged_data(company_name, new_data):
         }
         
         # 3. Upsert
-        # on_conflict="buyer_name" ensures we update the existing record
         response = supabase.table("mousa").upsert(payload, on_conflict="buyer_name").execute()
         
         return {"status": "success", "data": response.data}
