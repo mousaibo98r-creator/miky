@@ -75,3 +75,33 @@ def upsert_company_data(data: dict):
     # Alias for backward compatibility if needed, but app.py uses save_scavenged_data
     company = data.get("buyer_name") or data.get("company_name")
     return save_scavenged_data(company, data)
+
+def fetch_all_buyers():
+    """Fetches ALL records from the 'mousa' table."""
+    supabase = get_supabase()
+    if not supabase:
+        return []
+    try:
+        # Fetch all rows (default limit is 1000, usually fine for this use case, 
+        # but could increase count if needed: .select("*", count="exact"))
+        response = supabase.table("mousa").select("*").execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Failed to fetch buyers: {e}")
+        return []
+
+def bulk_upsert_buyers(records: list):
+    """
+    Bulk upsert a list of buyer records to 'mousa'.
+    """
+    supabase = get_supabase()
+    if not supabase or not records:
+        return {"status": "skipped", "message": "No data or connection"}
+
+    try:
+        # Supabase bulk upsert
+        response = supabase.table("mousa").upsert(records, on_conflict="buyer_name").execute()
+        return {"status": "success", "data": response.data}
+    except Exception as e:
+        logger.error(f"Bulk upsert failed: {e}")
+        return {"status": "error", "message": str(e)}

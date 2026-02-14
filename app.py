@@ -4,106 +4,89 @@ import asyncio
 import os
 import logging
 import time
+import json
 
 # 1. FORCE WIDE LAYOUT - MUST be the very first Streamlit command
 st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\U0001f578\ufe0f")
 
 # Modular Imports
-from services.data_loader import load_buyers
+# Note: services.data_loader is no longer used for local JSON
 from services.search_agent import SearchAgent
-from services.database import save_scavenged_data, get_supabase
+from services.database import save_scavenged_data, fetch_all_buyers, bulk_upsert_buyers
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 # --- Title & Header ---
-st.title("\U0001f578\ufe0f Intelligence Matrix: Modular Edition")
+st.title("\U0001f578\ufe0f Intelligence Matrix: Database Edition")
 st.markdown("---")
 
-# --- Load Data & Sync ---
-@st.cache_data(ttl=300) # Cache for 5 mins
-def get_data():
-    # 1. Load Local JSON
-    raw = load_buyers()
-    df = pd.DataFrame(raw) if raw else pd.DataFrame()
-    
-    if df.empty:
-        return df
+# --- Load Data (Single Source of Truth: Supabase) ---
+@st.cache_data(ttl=300) # Cache to prevent spamming DB on every rerun
+def get_data_from_db():
+    raw_data = fetch_all_buyers()
+    if not raw_data:
+        return pd.DataFrame()
+    return pd.DataFrame(raw_data)
 
-    # 2. Fetch Supabase Updates 
-    # Sync 'mousa' table to update local dataframe with fresh contacts
-    try:
-        supabase = get_supabase()
-        if supabase:
-            # Select relevant columns to merge
-            res = supabase.table("mousa").select("buyer_name, email, phone, website, address").execute()
-            if res.data:
-                # Convert DB data to dict for fast lookup by buyer_name
-                db_map = {row["buyer_name"]: row for row in res.data}
-                
-                # Merge Logic: Iterate and update JSON records with DB data
-                records = df.to_dict("records")
-                updated_records = []
-                
-                for row in records:
-                    bname = row.get("buyer_name")
-                    if bname and bname in db_map:
-                        db_row = db_map[bname]
-                        # Prioritize DB data if it exists
-                        if db_row.get("email"): row["email"] = db_row["email"]
-                        if db_row.get("phone"): row["phone"] = db_row["phone"]
-                        if db_row.get("website"): row["website"] = db_row["website"]
-                        if db_row.get("address"): row["address"] = db_row["address"]
-                    updated_records.append(row)
-                
-                df = pd.DataFrame(updated_records)
-                
-    except Exception as e:
-        logging.error(f"Supabase sync failed: {e}")
-        # Fail gracefully, behave as if no DB updates
-        
-    return df
+# Fetch Data
+df = get_data_from_db()
 
-df = get_data()
-
+# Handle Empty State
 if df.empty:
-    st.error("No data available. Please check data/combined_buyers.json")
-    st.stop()
+    st.warning("No data found in Supabase 'mousa' table.")
+    # Initialize empty DF with expected columns to avoid errors
+    df = pd.DataFrame(columns=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"])
 
-# --- Sidebar Filters ---
+# --- Sidebar Actions ---
 with st.sidebar:
-    st.header("Filters")
+    st.header("Actions")
     
+    # 3. Export Feature
+    json_str = df.to_json(orient="records", indent=2)
+    st.download_button(
+        label="\U0001f4e5 Download Database as JSON",
+        data=json_str,
+        file_name="mousa_export.json",
+        mime="application/json"
+    )
+    
+    st.divider()
+    
+    st.header("Filters")
     # Country Filter (Strict Logic)
     country_col = "destination_country"
     
-    # Safety Check: Ensure column exists
+    # Ensure column exists (Supabase might return different case/columns?)
+    # Normalize if needed, but assuming user Schema is consistent
     if country_col not in df.columns:
-        st.error(f"Critical Error: Column '{country_col}' missing from dataset.")
-        st.stop()
+         # Fallback or warn?
+         # If data comes from CSV import, keys should look like CSV headers or JSON keys
+         # If DB columns are different, we might need mapping. 
+         # Assuming DB columns match JSON keys exactly based on previous refactors.
+         pass 
 
-    # Get unique countries
-    all_countries = sorted(df[country_col].dropna().unique().tolist())
-    
-    # User Selection
-    selected_countries = st.multiselect("Select Country", options=all_countries)
-    
-    st.info(f"Loaded {len(df)} companies.")
+    if country_col in df.columns:
+        all_countries = sorted(df[country_col].dropna().unique().tolist())
+        selected_countries = st.multiselect("Select Country", options=all_countries)
+    else:
+        selected_countries = []
+        
+    st.info(f"Loaded {len(df)} records from Database.")
 
 # --- Apply Filter (Logic) ---
-if selected_countries:
-    # Strict filter: Only show rows where destination_country is in selection
+if selected_countries and country_col in df.columns:
     dff = df[df[country_col].isin(selected_countries)].copy()
 else:
     dff = df.copy()
 
-# --- Search Bar (Additional Filter) ---
+# --- Search Bar ---
 col_search, _ = st.columns([1, 2])
 with col_search:
     search_query = st.text_input("Search Company Name", placeholder="Type to filter table...")
     if search_query:
-        # Filter by buyer_name
-        dff = dff[dff["buyer_name"].str.contains(search_query, case=False, na=False)]
+         # Case insensitive search
+         dff = dff[dff["buyer_name"].str.contains(search_query, case=False, na=False)]
 
 st.markdown(f"**Showing {len(dff)} companies**")
 
@@ -111,34 +94,84 @@ st.markdown(f"**Showing {len(dff)} companies**")
 col_table, col_profile = st.columns([0.65, 0.35], gap="large")
 
 with col_table:
-    event = st.dataframe(
+    # 2. Manual Editing & Saving
+    st.subheader("Interactive Database")
+    
+    # Configuration for columns
+    column_config = {
+        "buyer_name": st.column_config.TextColumn("Company", disabled=True), # PK should not be editable here easily
+        "total_usd": st.column_config.NumberColumn("Volume (USD)", format="$%.2f"),
+        "email": "Email",
+        "phone": "Phone",
+        "website": st.column_config.LinkColumn("Website"),
+        "destination_country": "Country"
+    }
+    
+    # Editable Dataframe
+    edited_df = st.data_editor(
         dff,
-        column_order=["buyer_name", country_col, "total_usd", "email", "phone"],
-        column_config={
-            "buyer_name": "Company",
-            "total_usd": st.column_config.NumberColumn("Volume (USD)", format="$%.2f"),
-            "email": "Email",
-            "phone": "Phone"
-        },
-        height=700,
+        column_order=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"],
+        column_config=column_config,
+        height=600,
         use_container_width=True,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="company_table"
+        num_rows="dynamic", # Allow add/delete
+        key="editor" 
     )
+    
+    # Save Button
+    if st.button("\U0001f4be Save Changes", type="primary"):
+        with st.spinner("Saving changes to Supabase..."):
+            # Convert edited DF to dict records
+            records_to_save = edited_df.to_dict("records")
+            
+            # This blindly upserts EVERYTHING in the view. 
+            # For massive datasets, we should only upsert changes, strictly speaking.
+            # But st.data_editor state usage is complex. 
+            # Given user request "take the edited data... and upsert", this is the direct implementation.
+            
+            res = bulk_upsert_buyers(records_to_save)
+            
+            if res.get("status") == "success":
+                st.success("Changes saved successfully!")
+                time.sleep(1)
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error(f"Save failed: {res.get('message')}")
 
 # --- Profile & Scavenge Logic ---
 with col_profile:
-    selected_rows = event.selection.rows
+    # How to get selection from data_editor?
+    # st.data_editor doesn't support 'on_select' event returning row index as cleanly as st.dataframe in older versions,
+    # BUT in recent Streamlit (1.35+), `on_select` is available or selection state.
+    # However, standard data_editor is primarily for editing.
+    # To keep Profile functionality, we might need a separate selection mechanism or rely on `on_select` if available.
+    # Let's try to use the `selection` parameter if supported, or fallback to a selectbox if not.
     
-    if selected_rows:
-        # Map selection index to dataframe index
-        row_idx = selected_rows[0]
-        record = dff.iloc[row_idx]
+    # Actually, st.data_editor DOES support `on_select` in latest versions.
+    # Let's assume user has a compatible version (since requirements.txt has streamlit).
+    # If not, we might need a workaround. But let's try the modern way first.
+    
+    # If on_select is NOT supported for data_editor in the installed version, 
+    # we might need to rely on the user clicking a row? 
+    # Current Streamlit stable `data_editor` does NOT always support row selection events for external usages like `dataframe`.
+    # Workaround: Add a "Select" checkbox column? Or just a Selectbox for the 'Profile' view.
+    
+    st.subheader("Company Profile")
+    
+    # Dropdown to select company from the CURRENT filtered view
+    company_options = dff["buyer_name"].tolist()
+    
+    if company_options:
+        selected_company = st.selectbox("Select Company to Profile", options=company_options)
+        
+        # Get record
+        record = dff[dff["buyer_name"] == selected_company].iloc[0]
         
         company_name = record["buyer_name"]
-        country = record[country_col]
+        # .get with default safely
+        country = record.get(country_col) or record.get("country") or ""
         
         # --- Entity Card ---
         st.markdown(f"""
@@ -149,83 +182,45 @@ with col_profile:
         </div>
         """, unsafe_allow_html=True)
         
-        # Check Session State for Enriched Data (Optional fallback, but get_data handles main sync)
-        enriched_key = f"enriched_{company_name}"
-        scavenged_data = st.session_state.get(enriched_key, {})
-        
-        # Display logic: Prefer scavenged > DB(merged in record) > Original
-        # Since 'record' now comes from merged DF, it should have the DB data already if refreshed.
-        
-        display_email = record.get("email", "")
-        # Fallback to session state if DB sync hasn't happened yet (e.g. before reload)
-        if not display_email and scavenged_data.get("emails"):
-             display_email = ", ".join(scavenged_data["emails"])
-        elif isinstance(display_email, list):
-             display_email = ", ".join(display_email)
-             
-        display_phone = record.get("phone", "")
-        if not display_phone and scavenged_data.get("phones"):
-             display_phone = ", ".join(scavenged_data["phones"])
-        elif isinstance(display_phone, list):
-             display_phone = ", ".join(display_phone)
-
-        # Current Data Display
+        # Display Current Info
         st.write("### \U0001f4ca Contact Info")
-        st.text_input("Email", value=str(display_email), disabled=True)
-        st.text_input("Phone", value=str(display_phone), disabled=True)
-        
-        if scavenged_data:
-            st.info("Recently scavenged (refreshing...)")
-        
+        st.text_input("Email", value=str(record.get("email", "")), disabled=True)
+        st.text_input("Phone", value=str(record.get("phone", "")), disabled=True)
+        st.text_input("Website", value=str(record.get("website", "")), disabled=True)
+
         st.markdown("---")
         
         # Scavenge Button
-        if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True):
+        if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True, key=f"scavenge_{company_name}"):
             agent = SearchAgent()
             
-            # User Requested Spinner Message
             status = st.status("Scavenging intelligence from the web...", expanded=True)
             
             async def run_scavenge():
-                # Callback wrapper
                 def log_status(msg):
                     status.write(msg)
-                
-                # Search using Agent
                 return await agent.find_company_leads(company_name, country, callback=log_status)
 
-            # Run Async
             result = asyncio.run(run_scavenge())
             
             status.update(label="Scavenge Complete!", state="complete", expanded=False)
             
             if result and "error" not in result:
-                # 1. Save to Session State (Instant UI Update - Temporary)
-                st.session_state[enriched_key] = result
-                
-                # 2. Auto-Save to Supabase 'mousa' table
+                # Save to DB (Auto-Save)
                 with st.spinner("Saving logic to Supabase..."):
-                    
-                    # Prepare payload: pass raw result, database.py handles flattening
                     payload = result.copy()
-                    
-                    # Save!
                     db_res = save_scavenged_data(company_name, payload)
                     
                     if db_res and db_res.get("status") == "success":
-                        st.success(f"\u2705 New intelligence saved to Supabase (mousa) for {company_name}")
-                        
-                        # --- AUTO-REFRESH LOGIC (Requested) ---
+                        st.success(f"Saved to Supabase!")
                         st.toast('Data saved! Refreshing view...', icon='🔄')
-                        time.sleep(1.5) # Allow toast to be seen
-                        st.cache_data.clear() # Clear cache to force get_data to re-fetch DB
+                        time.sleep(1.5)
+                        st.cache_data.clear()
                         st.rerun()
-                        
                     else:
                         st.warning(f"Could not save: {db_res.get('message')}")
-                        
             else:
-                st.error(f"Scavenge Failed: {result.get('message', 'Unknown error')}")
-                
+                st.error(f"Scavenge Failed: {result.get('message')}")
+
     else:
-        st.info("Select a company from the list to view profile.")
+        st.info("No companies match filter.")
