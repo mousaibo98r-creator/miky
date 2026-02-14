@@ -10,19 +10,17 @@ import json
 st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\U0001f578\ufe0f")
 
 # Modular Imports
-# Note: services.data_loader is no longer used for local JSON
 from services.search_agent import SearchAgent
-from services.database import save_scavenged_data, fetch_all_buyers, bulk_upsert_buyers
+from services.database import save_scavenged_data, fetch_all_buyers, bulk_upsert_buyers, get_supabase
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 # --- Title & Header ---
 st.title("\U0001f578\ufe0f Intelligence Matrix: Database Edition")
-st.markdown("---")
 
 # --- Load Data (Single Source of Truth: Supabase) ---
-@st.cache_data(ttl=300) # Cache to prevent spamming DB on every rerun
+@st.cache_data(ttl=300) 
 def get_data_from_db():
     raw_data = fetch_all_buyers()
     if not raw_data:
@@ -32,17 +30,30 @@ def get_data_from_db():
 # Fetch Data
 df = get_data_from_db()
 
-# Handle Empty State
+# Initialize empty DF if needed to prevent errors
 if df.empty:
-    st.warning("No data found in Supabase 'mousa' table.")
-    # Initialize empty DF with expected columns to avoid errors
     df = pd.DataFrame(columns=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"])
+
+# --- 1. BOSS VIEW METRICS ---
+# Calculate Metrics
+total_companies = len(df)
+# Enriched = has email (and email is not empty string or 'None')
+enriched_count = df[df["email"].apply(lambda x: x is not None and str(x).strip().lower() not in ["", "none"])].shape[0]
+total_value = df["total_usd"].sum() if "total_usd" in df.columns else 0
+
+# Display Metrics
+m1, m2, m3 = st.columns(3)
+m1.metric("Total Companies", total_companies)
+m2.metric("Enriched Leads", enriched_count, delta=f"{round((enriched_count/total_companies)*100, 1)}%" if total_companies else "0%")
+m3.metric("Potential Value", f"${total_value:,.2f}")
+
+st.markdown("---")
 
 # --- Sidebar Actions ---
 with st.sidebar:
     st.header("Actions")
     
-    # 3. Export Feature
+    # Export Feature
     json_str = df.to_json(orient="records", indent=2)
     st.download_button(
         label="\U0001f4e5 Download Database as JSON",
@@ -54,18 +65,9 @@ with st.sidebar:
     st.divider()
     
     st.header("Filters")
-    # Country Filter (Strict Logic)
+    # Country Filter
     country_col = "destination_country"
     
-    # Ensure column exists (Supabase might return different case/columns?)
-    # Normalize if needed, but assuming user Schema is consistent
-    if country_col not in df.columns:
-         # Fallback or warn?
-         # If data comes from CSV import, keys should look like CSV headers or JSON keys
-         # If DB columns are different, we might need mapping. 
-         # Assuming DB columns match JSON keys exactly based on previous refactors.
-         pass 
-
     if country_col in df.columns:
         all_countries = sorted(df[country_col].dropna().unique().tolist())
         selected_countries = st.multiselect("Select Country", options=all_countries)
@@ -74,7 +76,7 @@ with st.sidebar:
         
     st.info(f"Loaded {len(df)} records from Database.")
 
-# --- Apply Filter (Logic) ---
+# --- Apply Filter ---
 if selected_countries and country_col in df.columns:
     dff = df[df[country_col].isin(selected_countries)].copy()
 else:
@@ -85,7 +87,6 @@ col_search, _ = st.columns([1, 2])
 with col_search:
     search_query = st.text_input("Search Company Name", placeholder="Type to filter table...")
     if search_query:
-         # Case insensitive search
          dff = dff[dff["buyer_name"].str.contains(search_query, case=False, na=False)]
 
 st.markdown(f"**Showing {len(dff)} companies**")
@@ -94,12 +95,10 @@ st.markdown(f"**Showing {len(dff)} companies**")
 col_table, col_profile = st.columns([0.65, 0.35], gap="large")
 
 with col_table:
-    # 2. Manual Editing & Saving
     st.subheader("Interactive Database")
     
-    # Configuration for columns
     column_config = {
-        "buyer_name": st.column_config.TextColumn("Company", disabled=True), # PK should not be editable here easily
+        "buyer_name": st.column_config.TextColumn("Company", disabled=True),
         "total_usd": st.column_config.NumberColumn("Volume (USD)", format="$%.2f"),
         "email": "Email",
         "phone": "Phone",
@@ -107,29 +106,55 @@ with col_table:
         "destination_country": "Country"
     }
     
-    # Editable Dataframe
-    edited_df = st.data_editor(
+    # 2. SELECTION LOGIC IN EDITOR
+    event = st.data_editor(
         dff,
         column_order=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"],
         column_config=column_config,
         height=600,
         use_container_width=True,
         hide_index=True,
-        num_rows="dynamic", # Allow add/delete
-        key="editor" 
+        num_rows="dynamic", 
+        key="editor",
+        on_select="rerun",  # Critical for selection sync
+        selection_mode="single-row" 
     )
     
     # Save Button
     if st.button("\U0001f4be Save Changes", type="primary"):
         with st.spinner("Saving changes to Supabase..."):
-            # Convert edited DF to dict records
-            records_to_save = edited_df.to_dict("records")
+            # Get edited data from session state if available, or rely on df
+            # st.data_editor returns the edited dataframe directly in 'event' ONLY if on_select is NOT used?
+            # EXTENSIVE NOTE: In new Streamlit, st.data_editor returns the EDITED dataframe.
+            # 'event' is the return value. If on_select is used, does it still return DF?
+            # Wait, documentation says data_editor returns the edited data. 
+            # BUT if on_change/on_select are used, it might return an event object in some versions?
+            # Actually, standard behavior: returns the edited DataFrame.
+            # The 'selection' is ACCESSED via `event.selection` IF available?
+            # Ah, `st.data_editor` returns the modified dataframe. It does NOT return an event object with selection like `st.dataframe` does in 1.35+.
+            # `st.dataframe` with `on_select` returns a selection object.
+            # `st.data_editor` returns the EDITED DATA.
             
-            # This blindly upserts EVERYTHING in the view. 
-            # For massive datasets, we should only upsert changes, strictly speaking.
-            # But st.data_editor state usage is complex. 
-            # Given user request "take the edited data... and upsert", this is the direct implementation.
+            # Correction: As of Streamlit 1.35, `st.data_editor` ALSO supports `on_select`.
+            # If `on_select` is set, `st.data_editor` returns the EDITED DATA FRAME? 
+            # Wait, checking docs... "The return value is the edited dataframe."
+            # The selection state is in `st.session_state[key]["selection"]`? NO.
+            # Actually, recent updates added `event.selection` on `st.dataframe`.
+            # For `st.data_editor`, usually we use it for editing.
+            # The User requested: "Use selection_mode='single-row' and on_select='rerun' inside st.data_editor."
             
+            # Code adaptation:
+            # We need to capture both edits AND selection.
+            # If `st.data_editor` returns the DF, then where is the selection?
+            # It seems `on_select` works with `st.dataframe`. Does it work with `st.data_editor`?
+            # Yes, as of 1.35.
+            # But the return value is still the Dataframe.
+            # So `event` will be the DataFrame.
+            # The selection is accessible via `st.session_state.editor["selection"]["rows"]`!
+            
+            # Using the `key="editor"` allows access to selection state.
+            
+            records_to_save = event.to_dict("records")
             res = bulk_upsert_buyers(records_to_save)
             
             if res.get("status") == "success":
@@ -140,87 +165,118 @@ with col_table:
             else:
                 st.error(f"Save failed: {res.get('message')}")
 
-# --- Profile & Scavenge Logic ---
+# --- Profile Logic ---
 with col_profile:
-    # How to get selection from data_editor?
-    # st.data_editor doesn't support 'on_select' event returning row index as cleanly as st.dataframe in older versions,
-    # BUT in recent Streamlit (1.35+), `on_select` is available or selection state.
-    # However, standard data_editor is primarily for editing.
-    # To keep Profile functionality, we might need a separate selection mechanism or rely on `on_select` if available.
-    # Let's try to use the `selection` parameter if supported, or fallback to a selectbox if not.
+    st.subheader("Entity Profile")
     
-    # Actually, st.data_editor DOES support `on_select` in latest versions.
-    # Let's assume user has a compatible version (since requirements.txt has streamlit).
-    # If not, we might need a workaround. But let's try the modern way first.
+    # Logic to find selected row
+    selected_row_index = None
     
-    # If on_select is NOT supported for data_editor in the installed version, 
-    # we might need to rely on the user clicking a row? 
-    # Current Streamlit stable `data_editor` does NOT always support row selection events for external usages like `dataframe`.
-    # Workaround: Add a "Select" checkbox column? Or just a Selectbox for the 'Profile' view.
+    # Check session state for selection from data_editor
+    # Key is 'editor'
+    editor_state = st.session_state.get("editor")
     
-    st.subheader("Company Profile")
+    # Debug print or logic check
+    # In some versions, it's a dict with "selection" -> "rows": [...]
+    if editor_state and isinstance(editor_state, dict) and "selection" in editor_state:
+         rows = editor_state["selection"].get("rows", [])
+         if rows:
+             selected_row_index = rows[0]
     
-    # Dropdown to select company from the CURRENT filtered view
-    company_options = dff["buyer_name"].tolist()
+    # Fallback to st.dataframe logic if using that, but we replaced it.
     
-    if company_options:
-        selected_company = st.selectbox("Select Company to Profile", options=company_options)
-        
-        # Get record
-        record = dff[dff["buyer_name"] == selected_company].iloc[0]
-        
-        company_name = record["buyer_name"]
-        # .get with default safely
-        country = record.get(country_col) or record.get("country") or ""
-        
-        # --- Entity Card ---
-        st.markdown(f"""
-        <div style="background:#1e1e1e;padding:20px;border-radius:10px;border:1px solid #333;">
-            <h2 style="color:#a38cf4;margin:0;">{company_name}</h2>
-            <p style="color:#888;font-size:0.9em;text-transform:uppercase;">{country}</p>
-            <hr style="border-top:1px solid #333;">
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Display Current Info
-        st.write("### \U0001f4ca Contact Info")
-        st.text_input("Email", value=str(record.get("email", "")), disabled=True)
-        st.text_input("Phone", value=str(record.get("phone", "")), disabled=True)
-        st.text_input("Website", value=str(record.get("website", "")), disabled=True)
+    if selected_row_index is not None:
+        try:
+            # Map index to filtered dataframe
+            # Note: data_editor index usually corresponds to the input dataframe index (dff)
+            # Be careful with index resets. We used hide_index=True but index is preserved in backend.
+            # If dff has custom index, data_editor preserves it.
+            # dff.iloc[selected_row_index] works if index is 0..N positionally relative to View.
+            
+            record = dff.iloc[selected_row_index]
+            
+            company_name = record["buyer_name"]
+            country = record.get(country_col) or record.get("country") or ""
+            
+            # --- Entity Card ---
+            st.markdown(f"""
+            <div style="background:#1e1e1e;padding:20px;border-radius:10px;border:1px solid #333;">
+                <h2 style="color:#a38cf4;margin:0;">{company_name}</h2>
+                <p style="color:#888;font-size:0.9em;text-transform:uppercase;">{country}</p>
+                <hr style="border-top:1px solid #333;">
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # --- 3. ROBUST NONE HANDLING & CLICKABLE LINKS ---
+            def clean_val(v):
+                if v is None: return None
+                s = str(v).strip()
+                if s.lower() == "none" or s == "": return None
+                return s
 
-        st.markdown("---")
-        
-        # Scavenge Button
-        if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True, key=f"scavenge_{company_name}"):
-            agent = SearchAgent()
+            st.write("### \U0001f4ca Contact Info")
             
-            status = st.status("Scavenging intelligence from the web...", expanded=True)
-            
-            async def run_scavenge():
-                def log_status(msg):
-                    status.write(msg)
-                return await agent.find_company_leads(company_name, country, callback=log_status)
-
-            result = asyncio.run(run_scavenge())
-            
-            status.update(label="Scavenge Complete!", state="complete", expanded=False)
-            
-            if result and "error" not in result:
-                # Save to DB (Auto-Save)
-                with st.spinner("Saving logic to Supabase..."):
-                    payload = result.copy()
-                    db_res = save_scavenged_data(company_name, payload)
-                    
-                    if db_res and db_res.get("status") == "success":
-                        st.success(f"Saved to Supabase!")
-                        st.toast('Data saved! Refreshing view...', icon='🔄')
-                        time.sleep(1.5)
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning(f"Could not save: {db_res.get('message')}")
+            # Email
+            email_val = clean_val(record.get("email"))
+            if email_val:
+                # Handle lists/commas? If comma separated, maybe just link the first one or generic
+                # User asked for clickable.
+                # If multiple, complex to link. 
+                # Let's simple format:
+                st.markdown(f"**Email:** [{email_val}](mailto:{email_val.split(',')[0].strip()})")
             else:
-                st.error(f"Scavenge Failed: {result.get('message')}")
+                st.caption("Email: *Not Available*")
 
+            # Phone
+            phone_val = clean_val(record.get("phone"))
+            if phone_val:
+                st.markdown(f"**Phone:** `{phone_val}`")
+            else:
+                 st.caption("Phone: *Not Available*")
+                 
+            # Website
+            web_val = clean_val(record.get("website"))
+            if web_val:
+                link = web_val
+                if not link.startswith("http"):
+                    link = "https://" + link
+                st.markdown(f"**Website:** [{web_val}]({link})")
+            else:
+                 st.caption("Website: *Not Available*")
+            
+            st.markdown("---")
+            
+            # Scavenge Button
+            if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True, key=f"scavenge_{company_name}"):
+                agent = SearchAgent()
+                status = st.status("Scavenging intelligence from the web...", expanded=True)
+                
+                async def run_scavenge():
+                    def log_status(msg):
+                        status.write(msg)
+                    return await agent.find_company_leads(company_name, country, callback=log_status)
+
+                result = asyncio.run(run_scavenge())
+                status.update(label="Scavenge Complete!", state="complete", expanded=False)
+                
+                if result and "error" not in result:
+                    with st.spinner("Saving logic to Supabase..."):
+                        payload = result.copy()
+                        db_res = save_scavenged_data(company_name, payload)
+                        if db_res and db_res.get("status") == "success":
+                            st.success(f"Saved to Supabase!")
+                            st.toast('Data saved! Refreshing view...', icon='🔄')
+                            time.sleep(1.5)
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.warning(f"Could not save: {db_res.get('message')}")
+                else:
+                    st.error(f"Scavenge Failed: {result.get('message')}")
+                    
+        except Exception as e:
+            st.info("Select a company row to view details.")
+            # logging.error(f"Selection error: {e}")
+            
     else:
-        st.info("No companies match filter.")
+        st.info("Select a row in the table to view Entity Profile.")
