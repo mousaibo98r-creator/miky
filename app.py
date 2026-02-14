@@ -3,6 +3,7 @@ import pandas as pd
 import asyncio
 import os
 import logging
+import time
 
 # 1. FORCE WIDE LAYOUT - MUST be the very first Streamlit command
 st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\U0001f578\ufe0f")
@@ -10,7 +11,7 @@ st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\
 # Modular Imports
 from services.data_loader import load_buyers
 from services.search_agent import SearchAgent
-from services.database import save_scavenged_data
+from services.database import save_scavenged_data, get_supabase
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,11 +20,49 @@ logging.basicConfig(level=logging.INFO)
 st.title("\U0001f578\ufe0f Intelligence Matrix: Modular Edition")
 st.markdown("---")
 
-# --- Load Data ---
-@st.cache_data
+# --- Load Data & Sync ---
+@st.cache_data(ttl=300) # Cache for 5 mins
 def get_data():
+    # 1. Load Local JSON
     raw = load_buyers()
-    return pd.DataFrame(raw) if raw else pd.DataFrame()
+    df = pd.DataFrame(raw) if raw else pd.DataFrame()
+    
+    if df.empty:
+        return df
+
+    # 2. Fetch Supabase Updates 
+    # Sync 'mousa' table to update local dataframe with fresh contacts
+    try:
+        supabase = get_supabase()
+        if supabase:
+            # Select relevant columns to merge
+            res = supabase.table("mousa").select("buyer_name, email, phone, website, address").execute()
+            if res.data:
+                # Convert DB data to dict for fast lookup by buyer_name
+                db_map = {row["buyer_name"]: row for row in res.data}
+                
+                # Merge Logic: Iterate and update JSON records with DB data
+                records = df.to_dict("records")
+                updated_records = []
+                
+                for row in records:
+                    bname = row.get("buyer_name")
+                    if bname and bname in db_map:
+                        db_row = db_map[bname]
+                        # Prioritize DB data if it exists
+                        if db_row.get("email"): row["email"] = db_row["email"]
+                        if db_row.get("phone"): row["phone"] = db_row["phone"]
+                        if db_row.get("website"): row["website"] = db_row["website"]
+                        if db_row.get("address"): row["address"] = db_row["address"]
+                    updated_records.append(row)
+                
+                df = pd.DataFrame(updated_records)
+                
+    except Exception as e:
+        logging.error(f"Supabase sync failed: {e}")
+        # Fail gracefully, behave as if no DB updates
+        
+    return df
 
 df = get_data()
 
@@ -110,16 +149,17 @@ with col_profile:
         </div>
         """, unsafe_allow_html=True)
         
-        # Check Session State for Enriched Data
+        # Check Session State for Enriched Data (Optional fallback, but get_data handles main sync)
         enriched_key = f"enriched_{company_name}"
         scavenged_data = st.session_state.get(enriched_key, {})
         
-        # Merge Source + Scavenged Data for Display
+        # Display logic: Prefer scavenged > DB(merged in record) > Original
+        # Since 'record' now comes from merged DF, it should have the DB data already if refreshed.
+        
         display_email = record.get("email", "")
-        # If no source email, check scavenged
+        # Fallback to session state if DB sync hasn't happened yet (e.g. before reload)
         if not display_email and scavenged_data.get("emails"):
              display_email = ", ".join(scavenged_data["emails"])
-        # If source has list, join it
         elif isinstance(display_email, list):
              display_email = ", ".join(display_email)
              
@@ -135,7 +175,7 @@ with col_profile:
         st.text_input("Phone", value=str(display_phone), disabled=True)
         
         if scavenged_data:
-            st.info("Showing enriched data from AI scan.")
+            st.info("Recently scavenged (refreshing...)")
         
         st.markdown("---")
         
@@ -160,7 +200,7 @@ with col_profile:
             status.update(label="Scavenge Complete!", state="complete", expanded=False)
             
             if result and "error" not in result:
-                # 1. Save to Session State (Instant UI Update)
+                # 1. Save to Session State (Instant UI Update - Temporary)
                 st.session_state[enriched_key] = result
                 
                 # 2. Auto-Save to Supabase 'mousa' table
@@ -174,10 +214,16 @@ with col_profile:
                     
                     if db_res and db_res.get("status") == "success":
                         st.success(f"\u2705 New intelligence saved to Supabase (mousa) for {company_name}")
+                        
+                        # --- AUTO-REFRESH LOGIC (Requested) ---
+                        st.toast('Data saved! Refreshing view...', icon='🔄')
+                        time.sleep(1.5) # Allow toast to be seen
+                        st.cache_data.clear() # Clear cache to force get_data to re-fetch DB
+                        st.rerun()
+                        
                     else:
                         st.warning(f"Could not save: {db_res.get('message')}")
                         
-                st.rerun()
             else:
                 st.error(f"Scavenge Failed: {result.get('message', 'Unknown error')}")
                 
