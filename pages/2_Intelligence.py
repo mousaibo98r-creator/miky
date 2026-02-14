@@ -1,3 +1,6 @@
+import asyncio
+import json
+import os
 import textwrap
 
 import streamlit as st
@@ -5,11 +8,11 @@ import streamlit as st
 st.title("\U0001f578\ufe0f Intelligence Matrix")
 
 # --- Heavy imports ONLY inside this page ---
-import time
 
 import pandas as pd
 
 from services.data_loader import load_buyers
+from services.deepseek_client import DeepSeekClient
 
 # --- Data loads AFTER title renders ---
 raw_data = load_buyers()
@@ -145,7 +148,7 @@ with col_profile:
             .obs-header {
                 font-size: 1.4rem; /* Slightly smaller for narrower col */
                 font-weight: 700;
-                color: #a38cf4; 
+                color: #a38cf4;
                 margin-bottom: 4px;
                 line-height: 1.2;
                 word-wrap: break-word; /* handle long names */
@@ -286,7 +289,6 @@ with col_profile:
         st.markdown("")  # spacer
 
         # Actions
-        # Using link_button for search is better UX in Streamlit
         st.link_button(
             "\U0001f30d Google Search",
             f"https://www.google.com/search?q={english_name}",
@@ -294,9 +296,47 @@ with col_profile:
         )
 
         if st.button("\U0001f985 Scavenge Data", use_container_width=True):
-            with st.spinner("Scavenging..."):
-                time.sleep(1.5)
-            st.toast("Data updated!", icon="\u2705")
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            if not api_key:
+                st.error("Please set DEEPSEEK_API_KEY in .env")
+            else:
+                with st.spinner("Scavenging deep web... (this may take 15-30s)"):
+                    try:
+                        client = DeepSeekClient(api_key=api_key)
+
+                        async def run_scavenge():
+                            return await client.extract_company_data(
+                                system_prompt="You are an expert commercial investigator. Find emails, phone numbers, and website URL. Return JSON with keys: emails, phones, website, address.",
+                                buyer_name=buyer_raw,
+                                country=dest_country,
+                            )
+
+                        result_json, turns = asyncio.run(run_scavenge())
+
+                        if result_json:
+                            st.toast(f"Scavenge complete in {turns} turns!", icon="\u2705")
+
+                            # Try parse JSON
+                            try:
+                                if isinstance(result_json, str):
+                                    # Clean json markdown if client didn't catch it
+                                    clean_json = result_json.strip()
+                                    if clean_json.startswith("```json"):
+                                        clean_json = clean_json[7:-3].strip()
+                                    data = json.loads(clean_json)
+                                else:
+                                    data = result_json
+
+                                st.markdown("### \U0001f50d Scavenged Data")
+                                st.json(data)
+                            except json.JSONDecodeError:
+                                st.warning("Could not parse JSON, showing raw output:")
+                                st.write(result_json)
+                        else:
+                            st.warning("No new data found.")
+
+                    except Exception as e:
+                        st.error(f"Scavenge failed: {str(e)}")
 
     else:
         # --- Empty Skeleton (Vertical) ---

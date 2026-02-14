@@ -1,6 +1,4 @@
-"""Services package for Export Analytics Platform.
+from .data_loader import load_buyers, get_buyer_names, get_countries
+from .deepseek_client import DeepSeekClient
 
-Provides data loading, AI client, and utility functions.
-"""
-
-__all__ = ["data_loader", "ai_client"]
+__all__ = ["load_buyers", "get_buyer_names", "get_countries", "DeepSeekClient"]
