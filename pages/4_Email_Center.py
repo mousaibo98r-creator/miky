@@ -5,7 +5,7 @@ import os
 import logging
 import json
 from datetime import datetime
-from services.search_agent import SearchAgent # Re-use for AI client
+from services.search_agent import SearchAgent 
 from services.database import fetch_all_buyers, get_supabase, bulk_upsert_buyers
 
 # Configure logging
@@ -17,29 +17,55 @@ st.title("\U0001f4e7 Cold Email Center")
 st.markdown("---")
 
 # --- Load Data (Audience) ---
-# Fetch all buyers, filter for those with emails
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60) # Short cache for debugging
 def get_audience():
+    # 1. Fetch RAW data
     raw_data = fetch_all_buyers()
+    
     if not raw_data:
         return pd.DataFrame()
+    
     df = pd.DataFrame(raw_data)
-    # Filter: Must have email + email is not empty/none
-    def has_email(x):
-        return x is not None and str(x).strip().lower() not in ["", "none", "nan", "null"]
+    
+    # --- DEBUGGING START ---
+    with st.expander("🔍 Debug: Raw Database Data", expanded=True):
+        st.write(f"Fetched {len(df)} rows from Supabase.")
+        if not df.empty:
+            st.write("Columns:", df.columns.tolist())
+            st.dataframe(df.head(10))
+    # --- DEBUGGING END ---
+
+    # Normalize columns to lowercase
+    df.columns = [c.lower() for c in df.columns]
     
     if "email" in df.columns:
-        df = df[df["email"].apply(has_email)].copy()
-        # Convert timestamp for UI
+        # 2. Filter Logic (Simplified & Looser)
+        # Just remove Nulls/NaNs and empty strings
+        original_count = len(df)
+        
+        # Drop None/NaN
+        df = df.dropna(subset=["email"])
+        
+        # Drop Empty Strings
+        df = df[df["email"].astype(str).str.strip() != ""]
+        
+        # Drop explicit "None" text (sometimes inserted by Python str(None))
+        df = df[~df["email"].astype(str).str.lower().isin(["none", "null", "nan"])]
+        
+        st.caption(f"Filtered from {original_count} to {len(df)} rows with valid emails.")
+
+        # Convert timestamp
         if "last_contacted_at" in df.columns:
             df["last_contacted_at"] = pd.to_datetime(df["last_contacted_at"], errors="coerce")
+            
         return df
+    
     return pd.DataFrame()
 
 df = get_audience()
 
 if df.empty:
-    st.warning("No companies with email addresses found in 'mousa' table.")
+    st.warning("⚠️ No companies found with valid emails. Please check the 'Debug Inspector' above to see your raw data.")
     st.stop()
 
 # --- Layout: Audience (Left) | Composer (Right) ---
@@ -48,10 +74,6 @@ col_audience, col_composer = st.columns([0.4, 0.6], gap="large")
 with col_audience:
     st.subheader("1. Select Audience")
     st.caption(f"Found {len(df)} leads with emails.")
-    
-    # Selection Table
-    # Use dataframe with selection
-    # We want multi-select
     
     event = st.dataframe(
         df,
@@ -80,26 +102,18 @@ with col_composer:
     else:
         st.success(f"Selected {len(selected_rows)} companies.")
         
-        # Templates
         subject = st.text_input("Subject Line", value="Partnership Opportunity with [My Company]")
         body_template = st.text_area("Body Template (Instructions for AI)", 
                                      value="Write a polite, professional cold email introducing our export services. \nReference their import volume (Total USD) to show we did our research. \nKeep it under 150 words.",
                                      height=150)
         
-        # Generate Drafts Button
         if st.button("✨ Generate Personalized Drafts", type="primary"):
             if not os.getenv("DEEPSEEK_API_KEY"):
                 st.error("DeepSeek API Key missing.")
             else:
-                st.session_state["drafts"] = {} # Clear old drafts
-                
-                # Progress Bar
+                st.session_state["drafts"] = {} 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                
-                # Re-use SearchAgent for its client (lazy way) or just create new client
-                # Let's instantiate SearchAgent just to access the client or copy the client logic?
-                # Actually, SearchAgent has the client. Let's use it.
                 agent = SearchAgent()
                 
                 async def generate_draft(company, total_usd, country):
@@ -115,7 +129,6 @@ with col_composer:
                     
                     Return ONLY the email body text. No subject in body.
                     """
-                    
                     try:
                         response = await agent.client.chat.completions.create(
                             model="deepseek-chat",
@@ -126,23 +139,18 @@ with col_composer:
                     except Exception as e:
                         return f"Error generating draft: {e}"
 
-                # Run Batch Generation
                 async def run_batch():
                     tasks = []
                     companies = selected_rows.to_dict("records")
-                    
                     for i, row in enumerate(companies):
                         status_text.text(f"Drafting for {row['buyer_name']}...")
-                        # rate limit?
                         task = generate_draft(row['buyer_name'], row.get('total_usd', 0), row.get('destination_country', ''))
                         tasks.append(task)
-                    
                     results = await asyncio.gather(*tasks)
                     return results
 
                 drafts = asyncio.run(run_batch())
                 
-                # Store in Session State
                 curr_drafts = {}
                 for i, row in enumerate(selected_rows.to_dict("records")):
                     curr_drafts[row['buyer_name']] = drafts[i]
@@ -151,17 +159,9 @@ with col_composer:
                 status_text.text("Drafting Complete!")
                 progress_bar.progress(100)
 
-        # Display Drafts & Send Logic
         if "drafts" in st.session_state and st.session_state["drafts"]:
             st.markdown("### Review Drafts")
-            
-            # Show drafts in tabs or expander? Expander is cleaner for multiple
             drafts = st.session_state["drafts"]
-            
-            # Filter drafts to only currently selected (if selection changed)
-            # Or just show all generated.
-            # Let's show drafts for selected rows.
-            
             valid_drafts = {k:v for k,v in drafts.items() if k in selected_rows["buyer_name"].values}
             
             for company, draft in valid_drafts.items():
@@ -170,13 +170,9 @@ with col_composer:
             
             st.markdown("---")
             
-            # SEND BUTTON
             if st.button("🚀 Send Emails (Simulation)", type="primary"):
                 with st.spinner("Sending emails..."):
-                    # Update Database 'last_contacted_at'
                     now = datetime.utcnow().isoformat()
-                    
-                    # Prepare Bulk Upsert
                     updates = []
                     for idx, row in selected_rows.iterrows():
                         updates.append({
@@ -185,7 +181,6 @@ with col_composer:
                         })
                         print(f"Sending email to {row['email']} for {row['buyer_name']}...")
                     
-                    # Persist
                     res = bulk_upsert_buyers(updates)
                     
                     if res.get("status") == "success":
