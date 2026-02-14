@@ -11,4 +11,6 @@ supabase
 openai
 beautifulsoup4
 requests
-duckduckgo-search
+duckduckgo-search>=5.0
+supabase
+pandas

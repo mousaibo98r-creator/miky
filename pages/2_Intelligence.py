@@ -1,18 +1,23 @@
+import streamlit as st
+
+# --- PAGE CONFIG MUST BE FIRST ---
+st.set_page_config(layout="wide", page_title="Intelligence Matrix")
+
 import asyncio
 import json
 import os
 import textwrap
-
-import streamlit as st
-
-st.title("\U0001f578\ufe0f Intelligence Matrix")
-
-# --- Heavy imports ONLY inside this page ---
+import re
 
 import pandas as pd
 
 from services.data_loader import load_buyers
 from services.deepseek_client import DeepSeekClient
+
+st.title("\U0001f578\ufe0f Intelligence Matrix")
+
+# --- Heavy imports ONLY inside this page ---
+# (none currently needed beyond top-level)
 
 # --- Data loads AFTER title renders ---
 raw_data = load_buyers()
@@ -45,27 +50,35 @@ else:
             }
         )
     df_intel = pd.DataFrame(mock_data)
-    st.info("No data file found. Showing demo data.")
+    if not raw_data:
+        st.info("No data file found. Showing demo data.")
 
 # --- Filters in Sidebar ---
 with st.sidebar:
     st.markdown("### \U0001f50d Filters")
-    # Use destination_country for filtering
+    # Determine country column
     country_col = "destination_country"
     if country_col not in df_intel.columns:
-        country_col = "country_english"  # fallback
+        if "country_english" in df_intel.columns:
+            country_col = "country_english"
+        else:
+            country_col = df_intel.columns[1] # fallback to 2nd col
+
+    # Get unique countries
     countries = sorted(list(df_intel[country_col].dropna().unique()))
     sel_country = st.multiselect("Country", options=countries)
 
     st.divider()
 
-    # Filter Logic
-    dff = df_intel.copy()
+    # --- EXPLICIT FILTER LOGIC ---
     if sel_country:
-        dff = dff[dff[country_col].isin(sel_country)]
+        # User selected countries -> Filter rows
+        dff = df_intel[df_intel[country_col].isin(sel_country)].copy()
+    else:
+        # No selection -> Show all
+        dff = df_intel.copy()
 
 # --- Main Layout: Side-by-Side [Matrix 70% | Profile 30%] ---
-# Note: Search is now above the table in the main area
 col_matrix, col_profile = st.columns([2.8, 1.2])
 
 with col_matrix:
@@ -79,24 +92,23 @@ with col_matrix:
     # Data Matrix
     if not dff.empty:
         # Pre-process list columns
-        dff = dff.copy()
-        dff["emails_display"] = dff["email"].apply(
-            lambda x: ", ".join(x) if isinstance(x, list) else str(x)
-        )
-        dff["phones_display"] = dff["phone"].apply(
-            lambda x: ", ".join(x) if isinstance(x, list) else str(x)
-        )
-        dff["websites_display"] = dff["website"].apply(
-            lambda x: ", ".join(x) if isinstance(x, list) else str(x)
-        )
-        dff["addresses_display"] = dff["address"].apply(
-            lambda x: "; ".join(x) if isinstance(x, list) else str(x)
-        )
-        # Ensure total_invoices exists (for mock/real compatibility)
-        if "total_invoices" not in dff.columns:
-            dff["total_invoices"] = 0
+        dff_display = dff.copy()
+        
+        def safe_join(x, sep=", "):
+            if isinstance(x, list):
+                return sep.join([str(i) for i in x if i])
+            return str(x) if pd.notna(x) else ""
 
-        # Column Order: Buyer, Country, USD, Emails, then others
+        dff_display["emails_display"] = dff_display["email"].apply(lambda x: safe_join(x))
+        dff_display["phones_display"] = dff_display["phone"].apply(lambda x: safe_join(x))
+        dff_display["websites_display"] = dff_display["website"].apply(lambda x: safe_join(x))
+        dff_display["addresses_display"] = dff_display["address"].apply(lambda x: safe_join(x, "; "))
+        
+        # Ensure total_invoices exists
+        if "total_invoices" not in dff_display.columns:
+            dff_display["total_invoices"] = 0
+
+        # Column Order
         display_cols = [
             "buyer_name",
             country_col,
@@ -108,8 +120,9 @@ with col_matrix:
             "addresses_display",
         ]
 
+        # Use dff_display for the table
         event = st.dataframe(
-            dff[display_cols],
+            dff_display[display_cols],
             column_config={
                 "buyer_name": "Buyer Name",
                 country_col: "Country",
@@ -124,10 +137,11 @@ with col_matrix:
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
-            height=600,  # Fixed height to match profile card
+            height=600,
         )
     else:
         event = None
+        st.warning("No records found.")
 
 with col_profile:
     st.markdown("### Entity Profile")
@@ -143,15 +157,14 @@ with col_profile:
                 padding: 24px;
                 color: #e0e0e0;
                 font-family: 'Segoe UI', sans-serif;
-                /* No fixed height, let it grow */
             }
             .obs-header {
-                font-size: 1.4rem; /* Slightly smaller for narrower col */
+                font-size: 1.4rem;
                 font-weight: 700;
                 color: #a38cf4;
                 margin-bottom: 4px;
                 line-height: 1.2;
-                word-wrap: break-word; /* handle long names */
+                word-wrap: break-word;
             }
             .obs-sub {
                 font-size: 0.75rem;
@@ -212,8 +225,13 @@ with col_profile:
     )
 
     if event and event.selection.rows:
+        # Get the selected row index from the VIEW (dff), but match it to the filtered dataframe
+        # event.selection.rows is a list of row INDICES of the displayed table
+        # Since we reset index? No, hide_index=True does not reset index in data
+        # BUT default st.dataframe index is 0,1,2... of the displayed data.
+        # So we must use iloc on dff, NOT df_intel
         idx = event.selection.rows[0]
-        record = dff.iloc[idx]
+        record = dff.iloc[idx] # Use dff (filtered)
 
         # --- Data Prep ---
         buyer_raw = record.get("buyer_name", "")
@@ -228,14 +246,40 @@ with col_profile:
         location_str = f"{dest_country} ({country_code})" if country_code else dest_country
 
         volume = record.get("total_usd", 0)
+        
+        def to_list(val):
+            if isinstance(val, list): return val
+            if pd.isna(val) or val == "": return []
+            return [str(val)]
 
-        emails = record.get("email", [])
-        websites = record.get("website", [])
-        phones = record.get("phone", [])
-        addresses = record.get("address", [])
+        emails = to_list(record.get("email", []))
+        websites = to_list(record.get("website", []))
+        phones = to_list(record.get("phone", []))
+        addresses = to_list(record.get("address", []))
+
+        # Check for SCAVENGED data in session state for this buyer
+        scavenge_key = f"scavenged_{buyer_raw}"
+        is_scavenged = False
+        if scavenge_key in st.session_state:
+            scav_data = st.session_state[scavenge_key]
+            
+            # Simple merge logic for UI display
+            if scav_data.get("emails"):
+                emails = list(set(emails + scav_data["emails"]))
+            if scav_data.get("phones"):
+                phones = list(set(phones + scav_data["phones"]))
+            if scav_data.get("website"):
+                w = scav_data["website"]
+                if isinstance(w, list): websites = list(set(websites + w))
+                elif isinstance(w, str) and w: websites = list(set(websites + [w]))
+            if scav_data.get("address"):
+                a = scav_data["address"]
+                if isinstance(a, list): addresses = list(set(addresses + a))
+                elif isinstance(a, str) and a: addresses = list(set(addresses + [a]))
+            is_scavenged = True
 
         def render_list_items(items, color="#00ffcc"):
-            if not isinstance(items, list) or not items:
+            if not items:
                 return "<div style='color:#555;font-style:italic;font-size:0.85rem'>None</div>"
             html = ""
             for it in items:
@@ -281,7 +325,7 @@ with col_profile:
                 {render_list_items(addresses, "#ccc")}
             </div>
 
-            <div class="obs-scavenge-tag">ID: Scavenged X</div>
+            {f'<div class="obs-scavenge-tag">NEW DATA FOUND</div>' if is_scavenged else ''}
         """)
 
         st.markdown(f'<div class="obsidian-card">{card_content}</div>', unsafe_allow_html=True)
@@ -300,74 +344,58 @@ with col_profile:
             if not api_key:
                 st.error("Please set DEEPSEEK_API_KEY in .env")
             else:
-                with st.spinner("Scavenging deep web... (this may take 15-30s)"):
+                status_box = st.empty()
+                status_box.info("Initializing Agent...")
+                
+                def update_status(msg):
+                    status_box.info(f"\U0001f916 Agent: {msg}")
+
+                with st.spinner("Scavenging deep web..."):
                     try:
                         client = DeepSeekClient(api_key=api_key)
 
                         async def run_scavenge():
                             return await client.extract_company_data(
-                                system_prompt="You are an expert commercial investigator. Find emails, phone numbers, and website URL. Return JSON with keys: emails, phones, website, address.",
+                                system_prompt="You are a research agent. Use 'web_search' to find the company website. Use 'fetch_page' to read it. Return valid JSON keys: emails, phones, website, address.",
                                 buyer_name=buyer_raw,
                                 country=dest_country,
+                                callback=update_status
                             )
 
                         result_json, turns = asyncio.run(run_scavenge())
-
-                        if result_json:
+                        status_box.empty()
+                        
+                        if isinstance(result_json, dict) and result_json.get("status") in ["error", "warning"]:
+                            # Handle error/warning
+                            if result_json["status"] == "error":
+                                st.error(f"Search failed: {result_json.get('message')}")
+                                if result_json.get("raw_content"):
+                                    with st.expander("Debug Info"):
+                                        st.write(result_json["raw_content"])
+                            else:
+                                st.warning(f"Search Warning: {result_json.get('message')}")
+                                st.info("The agent returned text instead of data.")
+                                with st.expander("Agent Message"):
+                                    st.write(result_json.get("raw_content"))
+                        
+                        elif result_json:
+                            # Success path - result_json is the data dict
+                            st.session_state[scavenge_key] = result_json
                             st.toast(f"Scavenge complete in {turns} turns!", icon="\u2705")
-
-                            # Try parse JSON
-                            try:
-                                if isinstance(result_json, str):
-                                    # Clean json markdown if client didn't catch it
-                                    clean_json = result_json.strip()
-                                    if clean_json.startswith("```json"):
-                                        clean_json = clean_json[7:-3].strip()
-                                    data = json.loads(clean_json)
-                                else:
-                                    data = result_json
-
-                                st.markdown("### \U0001f50d Scavenged Data")
-                                st.json(data)
-                            except json.JSONDecodeError:
-                                st.warning("Could not parse JSON, showing raw output:")
-                                st.write(result_json)
+                            st.rerun()
                         else:
-                            st.warning("No new data found.")
+                            st.warning("No data returned.")
 
                     except Exception as e:
-                        st.error(f"Scavenge failed: {str(e)}")
+                        st.error(f"Scavenge error: {str(e)}")
 
     else:
-        # --- Empty Skeleton (Vertical) ---
+        # --- Empty Skeleton ---
         skeleton_content = textwrap.dedent("""
             <div class="obs-header" style="color:#333">NO SELECTION</div>
             <div class="obs-sub" style="color:#333">PLEASE SELECT A ROW</div>
-
-            <div class="obs-grid-2" style="border-top-color:#222">
-                <div>
-                    <div class="obs-section-label" style="color:#333">LOCATION</div>
-                    <div class="obs-value obs-placeholder">---</div>
-                </div>
-                <div>
-                    <div class="obs-section-label" style="color:#333">VOLUME</div>
-                    <div class="obs-value obs-placeholder">---</div>
-                </div>
-            </div>
-
-            <div class="obs-list-section">
-                <div class="obs-list-title" style="color:#444">EMAILS</div>
-                <div class="obs-placeholder">---</div>
-            </div>
-
-            <div class="obs-list-section">
-                <div class="obs-list-title" style="color:#444">PHONES</div>
-                <div class="obs-placeholder">---</div>
-            </div>
-            
-             <div style="margin-top:20px;color:#444;font-style:italic;font-size:0.8rem">
-                Select a row from the table on the left to view details here.
-            </div>
+            <br>
+            <div style="color:#444;font-style:italic">Select a company to view details and scavenge for data.</div>
         """)
         st.markdown(
             f'<div class="obsidian-card">{skeleton_content}</div>',

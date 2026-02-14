@@ -1,154 +1,162 @@
+# =====================================================================
+# Main Application Entry Point
+# =====================================================================
 import streamlit as st
 
-# =====================================================================
-# PAGE CONFIG — MUST BE THE ABSOLUTE FIRST STREAMLIT COMMAND
-# Nothing else (no st.*, no st.secrets, no st.cache) can appear above.
-# =====================================================================
-st.set_page_config(
-    page_title="Export Analytics Platform",
-    page_icon="\U0001f30d",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# 1. Wide Mode - First Command
+st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\U0001f578\ufe0f")
 
-# =====================================================================
-# Standard-library imports only (safe, no side-effects)
-# =====================================================================
-import logging
+import pandas as pd
+import asyncio
 import os
-import sys
+import logging
 
+# Modular Imports
+from services.data_loader import load_buyers
+from services.search_agent import SearchAgent
+from services.database import upsert_company_data
+
+# Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# Ensure project root is in Python path (so pages/ can find services/)
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# --- Title & Header ---
+st.title("\U0001f578\ufe0f Intelligence Matrix: Modular Edition")
+st.markdown("---")
 
-# =====================================================================
-# Load .env file (lightweight, no network I/O, optional dependency)
-# =====================================================================
-try:
-    from dotenv import load_dotenv
+# --- Load Data ---
+@st.cache_data
+def get_data():
+    raw = load_buyers()
+    return pd.DataFrame(raw) if raw else pd.DataFrame()
 
-    load_dotenv()
-except ImportError:
-    pass  # python-dotenv is not required on Streamlit Cloud
+df = get_data()
 
-# =====================================================================
-# Bridge st.secrets → os.environ (AFTER set_page_config)
-# Streamlit Cloud injects secrets here; we mirror them to os.environ
-# so that services/ can read them uniformly via os.environ.
-# =====================================================================
-try:
-    if hasattr(st, "secrets"):
-        for key in ("SUPABASE_URL", "SUPABASE_KEY", "DEEPSEEK_API_KEY"):
-            if key not in os.environ:
-                try:
-                    val = st.secrets[key]
-                    os.environ[key] = str(val)
-                except (KeyError, TypeError):
-                    pass
-except Exception as exc:
-    logger.debug("st.secrets bridge skipped: %s", exc)
+if df.empty:
+    st.error("No data available. Please check data/combined_buyers.json")
+    st.stop()
 
+# --- Sidebar Filters ---
+with st.sidebar:
+    st.header("Filters")
+    
+    # Country Filter
+    country_col = "destination_country"
+    if country_col not in df.columns:
+        # Fallback logic
+        cols = [c for c in df.columns if "country" in c.lower()]
+        country_col = cols[0] if cols else df.columns[1]
 
-# =====================================================================
-# HOME PAGE UI — lightweight, no pandas/plotly/supabase at module level
-# =====================================================================
-st.title("\U0001f30d Export Analytics Platform")
+    all_countries = sorted(df[country_col].dropna().unique().tolist())
+    selected_countries = st.multiselect("Select Country", options=all_countries)
+    
+    st.info(f"Loaded {len(df)} companies.")
 
-st.markdown(
-    """
-<style>
-    .stApp { background-color: #0e1117; }
-    .hero-card {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        border: 1px solid #00d2ff33;
-        margin-bottom: 1rem;
-    }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# --- Filter Logic (Strict) ---
+if selected_countries:
+    dff = df[df[country_col].isin(selected_countries)].copy()
+else:
+    dff = df.copy()
 
-st.markdown(
-    """
-<div class="hero-card">
-    <h2 style="color: #00d2ff; margin: 0">Welcome to Your Intelligence Hub</h2>
-    <p style="color: #ccc; font-size: 1.1rem">
-        Navigate using the sidebar to access powerful analytics, buyer intelligence,
-        AI-powered data enrichment, and more.
-    </p>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+# --- Search Bar ---
+col_search, _ = st.columns([1, 2])
+with col_search:
+    search_query = st.text_input("Search Company Name", placeholder="Type to filter table...")
+    if search_query:
+        dff = dff[dff["buyer_name"].str.contains(search_query, case=False, na=False)]
 
-# --- Navigation cards ---
-col1, col2, col3 = st.columns(3)
+st.markdown(f"**Showing {len(dff)} companies**")
 
-with col1:
-    st.markdown(
-        """
-    <div style="background:#262730;padding:20px;border-radius:10px;border:1px solid #41424b;text-align:center">
-        <div style="font-size:2rem">\U0001f4ca</div>
-        <div style="color:#00d2ff;font-weight:bold">Dashboard</div>
-        <div style="color:#999;font-size:0.9rem">Charts & KPIs</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
+# --- Layout: Table (Left) + Profile (Right) ---
+col_table, col_profile = st.columns([0.65, 0.35], gap="large")
+
+with col_table:
+    event = st.dataframe(
+        dff,
+        column_order=["buyer_name", country_col, "total_usd", "email", "phone"],
+        column_config={
+            "buyer_name": "Company",
+            "total_usd": st.column_config.NumberColumn("Volume (USD)", format="$%.2f"),
+            "email": "Email",
+            "phone": "Phone"
+        },
+        height=700,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="company_table"
     )
 
-with col2:
-    st.markdown(
-        """
-    <div style="background:#262730;padding:20px;border-radius:10px;border:1px solid #41424b;text-align:center">
-        <div style="font-size:2rem">\U0001f578\ufe0f</div>
-        <div style="color:#00d2ff;font-weight:bold">Intelligence</div>
-        <div style="color:#999;font-size:0.9rem">Buyer Data Matrix</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
+# --- Profile & Scavenge Logic ---
+with col_profile:
+    selected_rows = event.selection.rows
+    
+    if selected_rows:
+        # Get actual row from filtered dataframe
+        # Note: st.dataframe selection indices correspond to the displayed dataframe's numeric index (0, 1, 2...)
+        # We need to map it correctly.
+        row_idx = selected_rows[0]
+        record = dff.iloc[row_idx]
+        
+        company_name = record["buyer_name"]
+        country = record[country_col]
+        
+        # --- Entity Card ---
+        st.markdown(f"""
+        <div style="background:#1e1e1e;padding:20px;border-radius:10px;border:1px solid #333;">
+            <h2 style="color:#a38cf4;margin:0;">{company_name}</h2>
+            <p style="color:#888;font-size:0.9em;text-transform:uppercase;">{country}</p>
+            <hr style="border-top:1px solid #333;">
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Current Data
+        st.write("### \U0001f4ca Current Data")
+        st.text_input("Email", value=str(record.get("email", "")), disabled=True)
+        st.text_input("Phone", value=str(record.get("phone", "")), disabled=True)
+        
+        st.markdown("---")
+        
+        # Scavenge Button
+        if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True):
+            agent = SearchAgent()
+            
+            status = st.status(f"Scavenging for {company_name}...", expanded=True)
+            
+            async def run_scavenge():
+                # 3. Callback wrapper
+                def log_status(msg):
+                    status.write(msg)
+                
+                # 4. Search
+                return await agent.find_company_leads(company_name, country, callback=log_status)
 
-with col3:
-    st.markdown(
-        """
-    <div style="background:#262730;padding:20px;border-radius:10px;border:1px solid #41424b;text-align:center">
-        <div style="font-size:2rem">\U0001f916</div>
-        <div style="color:#00d2ff;font-weight:bold">AI Search</div>
-        <div style="color:#999;font-size:0.9rem">DeepSeek Enrichment</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-st.divider()
-
-# --- Environment / system status (env-var check ONLY, no network calls) ---
-st.subheader("System Status")
-c1, c2, c3 = st.columns(3)
-
-with c1:
-    data_file = os.path.join(PROJECT_ROOT, "data", "combined_buyers.json")
-    if os.path.exists(data_file):
-        size_mb = os.path.getsize(data_file) / (1024 * 1024)
-        st.success(f"\u2705 Data file loaded ({size_mb:.1f} MB)")
+            # Run Async
+            result = asyncio.run(run_scavenge())
+            
+            status.update(label="Scavenge Complete!", state="complete", expanded=False)
+            
+            if result and "error" not in result:
+                st.success("New Data Found!")
+                
+                # Show Diff
+                st.json(result)
+                
+                # Auto-Save
+                save_payload = {
+                    "buyer_name": company_name,
+                    "country": country,
+                    **result
+                }
+                
+                with st.spinner("Saving to Leads Database..."):
+                    db_res = upsert_company_data(save_payload)
+                    if db_res and db_res.get("status") == "success":
+                        st.toast("Saved to Supabase!", icon="\U0001f4be")
+                    else:
+                        st.warning(f"Could not save: {db_res.get('message')}")
+            else:
+                st.error(f"Scavenge Failed: {result.get('message', 'Unknown error')}")
+                
     else:
-        st.warning("\u26a0\ufe0f Data file not found")
-
-with c2:
-    if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_KEY"):
-        st.success("\u2705 Supabase configured")
-    else:
-        st.info("\u2139\ufe0f Supabase not configured")
-
-with c3:
-    if os.environ.get("DEEPSEEK_API_KEY"):
-        st.success("\u2705 DeepSeek AI ready")
-    else:
-        st.info("\u2139\ufe0f DeepSeek not configured")
+        st.info("Select a company from the list to view profile.")
