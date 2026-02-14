@@ -1,6 +1,9 @@
-import streamlit as st
 import datetime
 import random
+
+import streamlit as st
+
+random.seed(99)  # Deterministic mock data
 
 st.title("\U0001f4e7 Email Center")
 st.caption("Mock email client - all sending requires button click.")
@@ -17,18 +20,22 @@ with ec1:
     subjects = ["Invoice Request", "Shipment Update", "New Order Inquiry", "Account Verification"]
     mock_emails = []
     for i in range(5):
-        mock_emails.append({
-            "id": i,
-            "sender": random.choice(senders),
-            "subject": random.choice(subjects),
-            "time": (datetime.datetime.now() - datetime.timedelta(hours=i*2)).strftime("%H:%M"),
-            "body": "This is a sample email body mock content regarding the subject line."
-        })
+        mock_emails.append(
+            {
+                "id": i,
+                "sender": random.choice(senders),
+                "subject": random.choice(subjects),
+                "time": (datetime.datetime.now() - datetime.timedelta(hours=i * 2)).strftime(
+                    "%H:%M"
+                ),
+                "body": "This is a sample email body mock content regarding the subject line.",
+            }
+        )
 
     for email in mock_emails:
         with st.expander(f"{email['sender']} - {email['subject']}"):
             st.caption(f"Time: {email['time']}")
-            st.write(email['body'])
+            st.write(email["body"])
             if st.button("Reply", key=f"reply_{email['id']}"):
                 st.info("Reply feature coming soon.")
 

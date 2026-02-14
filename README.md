@@ -1,39 +1,63 @@
 # Export Analytics Platform
 
-## Overview
-This is a Streamlit-based analytics platform designed for export data visualization and management. It features a dashboard, intelligence matrix, email center, and file manager.
+A Streamlit-based analytics platform for export buyer intelligence.
 
 ## Features
-- **Dashboard**: KPI metrics and interactive charts (Dual-axis, Donut).
-- **Intelligence**: Filterable data matrix with entity profiles.
-- **Email Center**: Mock email client and SMTP configuration.
-- **File Manager**: Upload and manage files.
-- **Settings**: Configuration for Supabase and API keys.
+
+- **Dashboard** — KPI metrics and interactive Plotly charts
+- **Intelligence** — Filterable buyer data matrix with entity profiles
+- **AI Search** — DeepSeek-powered contact data enrichment
+- **Email Center** — Mock email client with SMTP config
+- **File Manager** — Upload and manage files
+- **Settings** — API key configuration
 
 ## Tech Stack
-- Frontend: Streamlit
-- Backend: Supabase (handling connection and mock fallback)
-- Visualization: Plotly
-- Data: Pandas
 
-## Installation
+- **App**: Streamlit (multipage)
+- **Visualization**: Plotly
+- **Data**: Pandas + JSON (4.5 MB buyer dataset)
+- **AI**: DeepSeek API via OpenAI SDK
+- **Backend**: Supabase (optional)
 
-1. Clone the repository.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Quick Start
 
-## Usage
-
-Run the application locally:
 ```bash
-streamlit run streamlit_app.py
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Copy .env.example to .env and set your keys (optional)
+cp .env.example .env
+
+# 3. Run the app
+streamlit run app.py
 ```
 
-## Deployment
+## Configuration
 
-This app is ready for deployment on [Streamlit Cloud](https://streamlit.io/cloud).
-1. Push this code to GitHub.
-2. Connect your GitHub repository to Streamlit Cloud.
-3. Add your Supabase secrets in the Streamlit Cloud dashboard.
+Set these environment variables (via `.env` or Streamlit Cloud secrets):
+
+| Variable | Required | Description |
+|---|---|---|
+| `SUPABASE_URL` | No | Supabase project URL |
+| `SUPABASE_KEY` | No | Supabase anon/service key |
+| `DEEPSEEK_API_KEY` | No | DeepSeek API key for AI Search |
+
+## Development
+
+```bash
+# Lint
+ruff check .
+
+# Format
+ruff format .
+
+# Run tests
+pytest -q
+```
+
+## Deployment (Streamlit Cloud)
+
+1. Push this repo to GitHub.
+2. Connect your GitHub repository to [Streamlit Cloud](https://streamlit.io/cloud).
+3. Set secrets (`SUPABASE_URL`, `SUPABASE_KEY`, `DEEPSEEK_API_KEY`) in the Streamlit Cloud dashboard.
+4. The app entry point is `app.py` (auto-detected).

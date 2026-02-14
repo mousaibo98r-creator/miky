@@ -1,0 +1,40 @@
+[project]
+name = "export-analytics-platform"
+version = "1.0.0"
+description = "Streamlit-based buyer intelligence and export analytics platform"
+requires-python = ">=3.10"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = [".", "services", "pages", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top — required by Streamlit (st.set_page_config first)
+    "B008",   # function call in default arg (Streamlit uses this pattern)
+    "B905",   # zip strict (not needed for this project)
+    "UP006",  # Use `dict` instead of `Dict` — breaks Streamlit caching introspection
+    "UP035",  # typing.Dict deprecated — same reason
+    "UP045",  # Use `X | None` — breaks Streamlit caching with runtime annotation eval
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["services"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --tb=short"

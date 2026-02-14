@@ -1,5 +1,9 @@
 [server]
+# headless = true is required for cloud/container deployments
 headless = true
 enableCORS = false
-port = 8080
-address = "0.0.0.0"
+enableXsrfProtection = false
+# Do NOT set port or address — let the platform use its default (8501)
+
+[browser]
+gatherUsageStats = false

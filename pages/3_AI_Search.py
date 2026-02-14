@@ -4,14 +4,14 @@ st.title("\U0001f916 AI Search (DeepSeek)")
 st.caption("Enrich buyer contact data using DeepSeek AI with web search capabilities.")
 
 import os
-import asyncio
-from services.data_loader import load_buyers, get_buyer_names, get_countries
+
+from services.data_loader import get_buyer_names, get_countries, load_buyers
 
 # --- Data loads AFTER title ---
 data = load_buyers()
 
 # Check API key availability
-api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+api_key = os.environ.get("DEEPSEEK_API_KEY", "")
 if not api_key:
     st.warning("DeepSeek API key not configured. Set DEEPSEEK_API_KEY in Settings or .env file.")
 
@@ -37,7 +37,7 @@ with col2:
 if data and selected_buyer:
     record = None
     for item in data:
-        if item.get('buyer_name') == selected_buyer:
+        if item.get("buyer_name") == selected_buyer:
             record = item
             break
     if record:
@@ -72,11 +72,11 @@ if st.button("\U0001f680 Enrich with AI", type="primary", disabled=not api_key):
 
         # Run async function
         try:
-            loop = asyncio.new_event_loop()
-            result, turns = loop.run_until_complete(
+            import asyncio
+
+            result, turns = asyncio.run(
                 enrich_buyer(selected_buyer, selected_country, status_callback)
             )
-            loop.close()
         except Exception as e:
             result = None
             turns = 0
@@ -93,24 +93,26 @@ if st.button("\U0001f680 Enrich with AI", type="primary", disabled=not api_key):
 
             with col_a:
                 st.markdown("**\U0001f4e7 Emails Found:**")
-                for e in result.get('email', []):
+                for e in result.get("email", []):
                     st.markdown(f"- {e}")
 
                 st.markdown("**\U0001f4de Phones Found:**")
-                for p in result.get('phone', []):
+                for p in result.get("phone", []):
                     st.markdown(f"- {p}")
 
             with col_b:
                 st.markdown("**\U0001f310 Websites Found:**")
-                for w in result.get('website', []):
+                for w in result.get("website", []):
                     st.markdown(f"- [{w}]({w})")
 
                 st.markdown("**\U0001f4cd Addresses Found:**")
-                for a in result.get('address', []):
+                for a in result.get("address", []):
                     st.markdown(f"- {a}")
 
-            if result.get('notes'):
+            if result.get("notes"):
                 st.info(f"Notes: {result['notes']}")
         else:
             status_container.update(label="No results found", state="error")
-            st.warning("AI search returned no results. The buyer may not have public contact information.")
+            st.warning(
+                "AI search returned no results. The buyer may not have public contact information."
+            )

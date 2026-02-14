@@ -1,5 +1,6 @@
-import streamlit as st
 import os
+
+import streamlit as st
 
 st.title("\u2699\ufe0f Settings")
 st.caption("API keys are loaded from environment variables. Never hardcoded.")
@@ -9,9 +10,9 @@ st.caption("API keys are loaded from environment variables. Never hardcoded.")
 st.subheader("Environment Variable Status")
 
 env_vars = {
-    "SUPABASE_URL": os.environ.get('SUPABASE_URL', ''),
-    "SUPABASE_KEY": os.environ.get('SUPABASE_KEY', ''),
-    "DEEPSEEK_API_KEY": os.environ.get('DEEPSEEK_API_KEY', ''),
+    "SUPABASE_URL": os.environ.get("SUPABASE_URL", ""),
+    "SUPABASE_KEY": os.environ.get("SUPABASE_KEY", ""),
+    "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", ""),
 }
 
 for var_name, var_value in env_vars.items():
@@ -27,21 +28,21 @@ st.info("For production, set environment variables in the Antigravity dashboard 
 with st.form("settings_form"):
     db_url = st.text_input(
         "Supabase URL",
-        value=st.session_state.get('supabase_url', ''),
-        help="Your Supabase project URL"
+        value=st.session_state.get("supabase_url", ""),
+        help="Your Supabase project URL",
     )
     db_key = st.text_input(
         "Supabase Key",
         type="password",
-        value=st.session_state.get('supabase_key', ''),
-        help="Your Supabase anon/service key"
+        value=st.session_state.get("supabase_key", ""),
+        help="Your Supabase anon/service key",
     )
     st.divider()
     deepseek_key = st.text_input(
         "DeepSeek API Key",
         type="password",
-        value=st.session_state.get('deepseek_key', ''),
-        help="API key from platform.deepseek.com"
+        value=st.session_state.get("deepseek_key", ""),
+        help="API key from platform.deepseek.com",
     )
 
     saved = st.form_submit_button("Save Configuration")
@@ -56,17 +57,17 @@ with st.form("settings_form"):
             for err in errors:
                 st.error(err)
         else:
-            st.session_state['supabase_url'] = db_url
-            st.session_state['supabase_key'] = db_key
-            st.session_state['deepseek_key'] = deepseek_key
+            st.session_state["supabase_url"] = db_url
+            st.session_state["supabase_key"] = db_key
+            st.session_state["deepseek_key"] = deepseek_key
 
             # Also set as env vars for the current session
             if db_url:
-                os.environ['SUPABASE_URL'] = db_url
+                os.environ["SUPABASE_URL"] = db_url
             if db_key:
-                os.environ['SUPABASE_KEY'] = db_key
+                os.environ["SUPABASE_KEY"] = db_key
             if deepseek_key:
-                os.environ['DEEPSEEK_API_KEY'] = deepseek_key
+                os.environ["DEEPSEEK_API_KEY"] = deepseek_key
 
             st.success("Settings saved for this session!")
             st.rerun()

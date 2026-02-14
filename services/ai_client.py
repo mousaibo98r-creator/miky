@@ -1,28 +1,41 @@
-import streamlit as st
-import os
+"""AI client service for DeepSeek-powered buyer data enrichment.
+
+Provides the `enrich_buyer` function which uses DeepSeek API with
+web search and page fetching tools to find contact information.
+"""
+
 import json
-import asyncio
+import logging
+import os
+import re
+from typing import Any, Callable, Dict, Optional, Tuple
+
+import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 
 @st.cache_resource
 def get_deepseek_client():
     """Create DeepSeek AI client once. Returns None if unavailable."""
-    api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not api_key:
         try:
-            if hasattr(st, 'secrets') and 'DEEPSEEK_API_KEY' in st.secrets:
-                api_key = str(st.secrets['DEEPSEEK_API_KEY'])
+            if hasattr(st, "secrets") and "DEEPSEEK_API_KEY" in st.secrets:
+                api_key = str(st.secrets["DEEPSEEK_API_KEY"])
         except Exception:
             pass
     if not api_key:
         return None
     try:
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        return client
+
+        return AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     except ImportError:
+        logger.warning("openai package not installed — AI features disabled")
         return None
-    except Exception:
+    except Exception as exc:
+        logger.error("Failed to create DeepSeek client: %s", exc)
         return None
 
 
@@ -37,33 +50,37 @@ TOOLS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query (e.g. 'Company Name Country contact email')"
+                        "description": ("Search query (e.g. 'Company Name Country contact email')"),
                     }
                 },
-                "required": ["query"]
-            }
-        }
+                "required": ["query"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "fetch_page",
-            "description": "Fetch a webpage to extract contact details like email, phone, address.",
+            "description": (
+                "Fetch a webpage to extract contact details like email, phone, address."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The URL to fetch"
+                        "description": "The URL to fetch",
                     }
                 },
-                "required": ["url"]
-            }
-        }
-    }
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
-SYSTEM_PROMPT = """You are an expert business intelligence agent. Your task is to find contact information for a company.
+SYSTEM_PROMPT = """\
+You are an expert business intelligence agent. Your task is to find contact \
+information for a company.
 
 You have access to two tools:
 1. web_search - Search the internet for company info
@@ -81,71 +98,92 @@ Return a JSON object with these fields:
 If a field has no data, use an empty list []. Always return valid JSON."""
 
 
-def _perform_search(query):
-    """Web search using available search engine."""
+def _perform_search(query: str) -> Dict[str, Any]:
+    """Web search using DuckDuckGo. Returns dict with 'results' key."""
     try:
-        try:
-            from duckduckgo_search import DDGS
-        except ImportError:
-            return {"results": [], "error": "No search library available"}
+        from duckduckgo_search import DDGS
+    except ImportError:
+        logger.warning("duckduckgo-search not installed")
+        return {"results": [], "error": "No search library available"}
 
+    try:
         results = []
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=5):
-                results.append({
-                    "title": r.get("title", ""),
-                    "body": r.get("body", ""),
-                    "href": r.get("href", "")
-                })
+                results.append(
+                    {
+                        "title": r.get("title", ""),
+                        "body": r.get("body", ""),
+                        "href": r.get("href", ""),
+                    }
+                )
         return {"results": results}
-    except Exception as e:
-        return {"results": [], "error": str(e)}
+    except Exception as exc:
+        logger.error("Search failed for '%s': %s", query, exc)
+        return {"results": [], "error": str(exc)}
 
 
-def _fetch_page(url):
-    """Fetch a page and extract text content."""
+def _fetch_page(url: str) -> Dict[str, Any]:
+    """Fetch a page and extract text content (max 3000 chars)."""
     try:
         import requests
         from bs4 import BeautifulSoup
 
-        resp = requests.get(url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)"
-        })
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        resp = requests.get(
+            url,
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)"},
+        )
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Remove script/style
         for tag in soup(["script", "style", "nav", "footer"]):
             tag.decompose()
 
         text = soup.get_text(separator="\n", strip=True)
-        # Limit to 3000 chars to avoid token overload
         return {"content": text[:3000], "url": url}
-    except Exception as e:
-        return {"content": "", "error": str(e), "url": url}
+    except Exception as exc:
+        logger.error("Fetch failed for '%s': %s", url, exc)
+        return {"content": "", "error": str(exc), "url": url}
 
 
-def _clean_json(text):
-    """Extract JSON from markdown code blocks."""
-    import re
+def _clean_json(text: str) -> Optional[Dict[str, Any]]:
+    """Extract JSON from raw text or markdown code blocks."""
     if "```" in text:
-        match = re.search(r'```(?:json)?\s*(.*?)```', text, re.DOTALL)
+        match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
         if match:
             text = match.group(1).strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        logger.warning("Failed to parse AI response as JSON")
         return None
 
 
-async def enrich_buyer(buyer_name, country, status_callback=None):
-    """Run DeepSeek AI enrichment for a buyer. Returns (result_dict, turns)."""
+async def enrich_buyer(
+    buyer_name: str,
+    country: str,
+    status_callback: Optional[Callable] = None,
+) -> Tuple[Optional[Dict[str, Any]], int]:
+    """Run DeepSeek AI enrichment for a buyer.
+
+    Args:
+        buyer_name: Name of the buyer/company.
+        country: Country of the buyer.
+        status_callback: Optional function called with status messages.
+
+    Returns:
+        Tuple of (result_dict or None, number_of_turns).
+    """
     client = get_deepseek_client()
     if client is None:
         return None, 0
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Find contact info for Buyer: '{buyer_name}' located in '{country}'."}
+        {
+            "role": "user",
+            "content": (f"Find contact info for Buyer: '{buyer_name}' located in '{country}'."),
+        },
     ]
 
     if status_callback:
@@ -158,7 +196,7 @@ async def enrich_buyer(buyer_name, country, status_callback=None):
                 model="deepseek-chat",
                 messages=messages,
                 tools=TOOLS,
-                tool_choice="auto"
+                tool_choice="auto",
             )
 
             message = response.choices[0].message
@@ -169,50 +207,58 @@ async def enrich_buyer(buyer_name, country, status_callback=None):
                     args = json.loads(tool_call.function.arguments)
 
                     if tool_call.function.name == "web_search":
-                        query = args.get('query', '')
+                        query = args.get("query", "")
                         if status_callback:
-                            status_callback(f"Turn {turn+1}: Searching '{query}'...")
+                            status_callback(f"Turn {turn + 1}: Searching '{query}'...")
                         result = _perform_search(query)
 
                     elif tool_call.function.name == "fetch_page":
-                        url = args.get('url', '')
+                        url = args.get("url", "")
                         if status_callback:
-                            status_callback(f"Turn {turn+1}: Fetching '{url[:50]}'...")
+                            status_callback(f"Turn {turn + 1}: Fetching '{url[:50]}'...")
                         result = _fetch_page(url)
                     else:
                         result = {"error": "Unknown tool"}
 
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(result, ensure_ascii=False)
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result, ensure_ascii=False),
+                        }
+                    )
             else:
                 content = message.content
                 if not content:
                     return None, turn
                 return _clean_json(content), turn
 
-        except Exception as e:
+        except Exception as exc:
+            logger.error("AI enrichment turn %d failed: %s", turn, exc)
             if status_callback:
-                status_callback(f"Error: {str(e)}")
+                status_callback(f"Error: {exc}")
             return None, turn
 
-    # Force final answer
+    # Force final answer after max turns
     if status_callback:
         status_callback("Max turns reached. Forcing final output...")
 
-    messages.append({
-        "role": "user",
-        "content": "STOP SEARCHING. Return the JSON object immediately with whatever data you found."
-    })
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "STOP SEARCHING. Return the JSON object immediately with whatever data you found."
+            ),
+        }
+    )
 
     try:
         final = await client.chat.completions.create(
             model="deepseek-chat",
-            messages=messages
+            messages=messages,
         )
         content = final.choices[0].message.content
         return _clean_json(content), max_turns
-    except Exception:
+    except Exception as exc:
+        logger.error("AI final turn failed: %s", exc)
         return None, max_turns
