@@ -26,6 +26,7 @@ ignore = [
     "UP006",  # Use `dict` instead of `Dict` — breaks Streamlit caching introspection
     "UP035",  # typing.Dict deprecated — same reason
     "UP045",  # Use `X | None` — breaks Streamlit caching with runtime annotation eval
+    "W293",   # blank line contains whitespace (common in multiline strings)
 ]
 
 [tool.ruff.lint.isort]
