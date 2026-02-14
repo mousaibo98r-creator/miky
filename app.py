@@ -40,11 +40,13 @@ with st.sidebar:
     st.header("Filters")
     
     # Country Filter
-    country_col = "destination_country"
+    # User confirmed the column logic needs to be strict
+    country_col = "destination_country" 
+    
+    # Fallback if column missing (safety check)
     if country_col not in df.columns:
-        # Fallback logic
-        cols = [c for c in df.columns if "country" in c.lower()]
-        country_col = cols[0] if cols else df.columns[1]
+         st.error(f"Column '{country_col}' not found in data. Please check JSON.")
+         st.stop()
 
     all_countries = sorted(df[country_col].dropna().unique().tolist())
     selected_countries = st.multiselect("Select Country", options=all_countries)
@@ -52,10 +54,11 @@ with st.sidebar:
     st.info(f"Loaded {len(df)} companies.")
 
 # --- Filter Logic (Strict) ---
+# Ensure dff is initialized from df
+dff = df.copy()
+
 if selected_countries:
-    dff = df[df[country_col].isin(selected_countries)].copy()
-else:
-    dff = df.copy()
+    dff = dff[dff[country_col].isin(selected_countries)]
 
 # --- Search Bar ---
 col_search, _ = st.columns([1, 2])
@@ -93,8 +96,7 @@ with col_profile:
     
     if selected_rows:
         # Get actual row from filtered dataframe
-        # Note: st.dataframe selection indices correspond to the displayed dataframe's numeric index (0, 1, 2...)
-        # We need to map it correctly.
+        # Map selection index to dataframe index
         row_idx = selected_rows[0]
         record = dff.iloc[row_idx]
         
@@ -109,7 +111,7 @@ with col_profile:
             <hr style="border-top:1px solid #333;">
         </div>
         """, unsafe_allow_html=True)
-        
+         
         # Check Session State for Enriched Data
         enriched_key = f"enriched_{company_name}"
         scavenged_data = st.session_state.get(enriched_key, {})
@@ -159,12 +161,12 @@ with col_profile:
                 st.session_state[enriched_key] = result
                 
                 # Auto-Save to Supabase
-                with st.spinner("Saving to Leads Database..."):
+                with st.spinner("Saving to Database..."):
                     from services.database import save_scavenged_data
                     
-                    # Prepare data payload (include country)
+                    # Prepare payload (flattening is done inside save_scavenged_data)
                     payload = result.copy()
-                    payload["country"] = country
+                    # We pass the raw result logic to database.py which handles flattening
                     
                     db_res = save_scavenged_data(company_name, payload)
                     

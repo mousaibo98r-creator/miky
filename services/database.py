@@ -22,8 +22,8 @@ def get_supabase() -> Client:
 
 def save_scavenged_data(company_name, new_data):
     """
-    Upserts scavenged data into the 'leads' table.
-    Fields: company_name, email, phone, website, address, last_scavenged_at.
+    Upserts scavenged data into the 'mousa' table.
+    Fields: buyer_name, email, phone, website, address.
     """
     supabase = get_supabase()
     if not supabase:
@@ -32,32 +32,33 @@ def save_scavenged_data(company_name, new_data):
 
     try:
         # Prepare payload
-        # new_data is expected to have lists for emails/phones
-        
         emails = new_data.get("emails", [])
         phones = new_data.get("phones", [])
         
-        # Flatten for single columns (take first item), but store full list in raw if needed
-        email_str = emails[0] if emails else None
-        phone_str = phones[0] if phones else None
+        # Flatten for single columns (comma-separated string as requested)
+        email_str = ", ".join(emails) if emails else None
+        phone_str = ", ".join(phones) if phones else None
         
-        # Helper to join if multiple
-        if len(emails) > 1: email_str = "; ".join(emails)
-        if len(phones) > 1: phone_str = "; ".join(phones)
+        # Extract website/address - prioritize text
+        website = new_data.get("website")
+        if isinstance(website, list):
+            website = ", ".join(website)
+            
+        address = new_data.get("address")
+        if isinstance(address, list):
+            address = ", ".join(address)
 
         payload = {
-            "company_name": company_name,
+            "buyer_name": company_name,  # Primary Key
             "email": email_str,
             "phone": phone_str,
-            "website": new_data.get("website"),
-            "address": new_data.get("address"),
-            "country": new_data.get("country"), # good to have
-            "last_scavenged_at": datetime.utcnow().isoformat(),
-            "raw_data": new_data # Optional: store full JSON
+            "website": website,
+            "address": address,
+            # "last_scavenged_at": datetime.utcnow().isoformat() # Optional if column exists
         }
         
-        # Upsert based on company_name
-        response = supabase.table("leads").upsert(payload, on_conflict="company_name").execute()
+        # Upsert based on buyer_name
+        response = supabase.table("mousa").upsert(payload, on_conflict="buyer_name").execute()
         
         return {"status": "success", "data": response.data}
         
