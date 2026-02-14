@@ -43,11 +43,9 @@ else:
     df_intel = pd.DataFrame(mock_data)
     st.info("No data file found. Showing demo data.")
 
-# --- Layout: Adjusted columns [Filters, Table, Profile] ---
-col_filters, col_table, col_profile = st.columns([1.2, 5, 2.8])
-
-with col_filters:
-    st.markdown("### Filters")
+# --- Layout: Filters in Sidebar, Main Area: [Table, Profile] ---
+with st.sidebar:
+    st.markdown("### \U0001f50d Filters")
     # Use destination_country for filtering
     country_col = "destination_country"
     if country_col not in df_intel.columns:
@@ -56,12 +54,16 @@ with col_filters:
     sel_country = st.multiselect("Country", options=countries)
     txt_search = st.text_input("Search Buyer/Exporter")
 
+    st.divider()
+
     dff = df_intel.copy()
     if sel_country:
         dff = dff[dff[country_col].isin(sel_country)]
     if txt_search:
         dff = dff[dff["buyer_name"].str.contains(txt_search, case=False, na=False)]
     st.info(f"Showing {len(dff)} records")
+
+col_table, col_profile = st.columns([5, 2])
 
 with col_table:
     st.markdown("### Data Matrix")
