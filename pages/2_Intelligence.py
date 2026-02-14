@@ -93,14 +93,15 @@ with col_matrix:
         if "total_invoices" not in dff.columns:
             dff["total_invoices"] = 0
 
+        # Column Order: Buyer, Country, USD, Emails, then others
         display_cols = [
             "buyer_name",
             country_col,
-            "total_invoices",
             "total_usd",
             "emails_display",
-            "websites_display",
+            "total_invoices",
             "phones_display",
+            "websites_display",
             "addresses_display",
         ]
 
@@ -109,11 +110,11 @@ with col_matrix:
             column_config={
                 "buyer_name": "Buyer Name",
                 country_col: "Country",
-                "total_invoices": st.column_config.NumberColumn("Invoices"),
                 "total_usd": st.column_config.NumberColumn("Total USD", format="$%.2f"),
                 "emails_display": "Email",
-                "websites_display": "Website",
+                "total_invoices": st.column_config.NumberColumn("Invoices"),
                 "phones_display": "Phone",
+                "websites_display": "Website",
                 "addresses_display": "Address",
             },
             use_container_width=True,
@@ -285,14 +286,7 @@ with col_profile:
         st.markdown("")  # spacer
 
         # Actions
-        if st.button("\U0001f30d Google Search", use_container_width=True):
-            st.markdown(
-                f"<script>window.open('https://www.google.com/search?q={english_name}', '_blank');</script>",
-                unsafe_allow_html=True,
-            )
-            # Fallback for Streamlit which might not allow pure JS open easily, using link_button is better but button requested
-
-        # Actually, using link_button for search is better UX in Streamlit
+        # Using link_button for search is better UX in Streamlit
         st.link_button(
             "\U0001f30d Google Search",
             f"https://www.google.com/search?q={english_name}",
