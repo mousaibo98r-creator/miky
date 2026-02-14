@@ -9,8 +9,8 @@ def get_supabase_client():
     except ImportError:
         return None
 
-    url = os.environ.get('SUPABASE_URL', '')
-    key = os.environ.get('SUPABASE_KEY', '')
+    url = os.environ.get('SUPABASE_URL', '') or st.secrets.get('SUPABASE_URL', '')
+    key = os.environ.get('SUPABASE_KEY', '') or st.secrets.get('SUPABASE_KEY', '')
     if not url or not key:
         return None
     try:

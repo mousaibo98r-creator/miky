@@ -1,9 +1,26 @@
 import streamlit as st
 import os
+import sys
+
+# Ensure project root is in Python path (for pages/ to find services/)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # Load environment variables (lightweight, no network I/O)
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not required on Streamlit Cloud
+
+# Bridge st.secrets → os.environ so services can use os.environ.get()
+try:
+    for key in ("SUPABASE_URL", "SUPABASE_KEY", "DEEPSEEK_API_KEY"):
+        if key not in os.environ and key in st.secrets:
+            os.environ[key] = st.secrets[key]
+except Exception:
+    pass
 
 # =====================================================================
 # PAGE CONFIG - FIRST STREAMLIT COMMAND

@@ -7,7 +7,7 @@ import asyncio
 @st.cache_resource
 def get_deepseek_client():
     """Create DeepSeek AI client once. Returns None if unavailable."""
-    api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+    api_key = os.environ.get('DEEPSEEK_API_KEY', '') or st.secrets.get('DEEPSEEK_API_KEY', '')
     if not api_key:
         return None
     try:
