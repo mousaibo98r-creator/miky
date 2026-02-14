@@ -158,17 +158,18 @@ with col_profile:
                 # Save to Session State
                 st.session_state[enriched_key] = result
                 
-                # Auto-Save
-                save_payload = {
-                    "buyer_name": company_name,
-                    "country": country,
-                    **result
-                }
-                
+                # Auto-Save to Supabase
                 with st.spinner("Saving to Leads Database..."):
-                    db_res = upsert_company_data(save_payload)
+                    from services.database import save_scavenged_data
+                    
+                    # Prepare data payload (include country)
+                    payload = result.copy()
+                    payload["country"] = country
+                    
+                    db_res = save_scavenged_data(company_name, payload)
+                    
                     if db_res and db_res.get("status") == "success":
-                        st.toast("Saved to Supabase!", icon="\U0001f4be")
+                        st.success(f"\u2705 New intelligence saved to Supabase for {company_name}")
                     else:
                         st.warning(f"Could not save: {db_res.get('message')}")
                         

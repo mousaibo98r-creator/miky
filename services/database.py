@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime
 from supabase import create_client, Client
 
 # Configure logger
@@ -19,45 +20,43 @@ def get_supabase() -> Client:
         logger.error(f"Failed to initialize Supabase: {e}")
         return None
 
-def upsert_company_data(data: dict):
+def save_scavenged_data(company_name, new_data):
     """
-    Upserts company data into the 'leads' table.
-    
-    Expected data dictionary format:
-    {
-        "buyer_name": "Company Name",
-        "country": "Country Name",
-        "emails": ["a@b.com", ...],
-        "phones": ["+123...", ...],
-        "website": "http://...",
-        "address": "123 St..."
-    }
+    Upserts scavenged data into the 'leads' table.
+    Fields: company_name, email, phone, website, address, last_scavenged_at.
     """
     supabase = get_supabase()
     if not supabase:
-        logger.warning("Supabase credentials missing. Flipping to dry-run (no-op).")
+        logger.warning("Supabase credentials missing. Skipping save.")
         return {"status": "skipped", "reason": "no_credentials"}
 
     try:
-        # Prepare payload for 'leads' table
-        # We assume the table has columns: company_name (PK/Unique), country, website, email, phone, address, raw_data (json)
-        # We need to ensure we don't crash on schema mismatches, so we'll wrap in try/except
+        # Prepare payload
+        # new_data is expected to have lists for emails/phones
         
+        emails = new_data.get("emails", [])
+        phones = new_data.get("phones", [])
+        
+        # Flatten for single columns (take first item), but store full list in raw if needed
+        email_str = emails[0] if emails else None
+        phone_str = phones[0] if phones else None
+        
+        # Helper to join if multiple
+        if len(emails) > 1: email_str = "; ".join(emails)
+        if len(phones) > 1: phone_str = "; ".join(phones)
+
         payload = {
-            "company_name": data.get("buyer_name"),
-            "country": data.get("country"),
-            "website": data.get("website"),
-            # Store primary contacts in columns, full list in raw_data
-            "email": data.get("emails")[0] if data.get("emails") else None,
-            "phone": data.get("phones")[0] if data.get("phones") else None,
-            "address": data.get("address"),
-            "raw_data": data # Backup full scavenged data
+            "company_name": company_name,
+            "email": email_str,
+            "phone": phone_str,
+            "website": new_data.get("website"),
+            "address": new_data.get("address"),
+            "country": new_data.get("country"), # good to have
+            "last_scavenged_at": datetime.utcnow().isoformat(),
+            "raw_data": new_data # Optional: store full JSON
         }
         
-        # Use company_name as the conflict target if possible, or let Supabase handle PK
-        # Assuming 'company_name' is unique or we rely on ID. 
-        # For upsert to work effectively without ID, we need a unique constraint on company_name.
-        
+        # Upsert based on company_name
         response = supabase.table("leads").upsert(payload, on_conflict="company_name").execute()
         
         return {"status": "success", "data": response.data}
@@ -65,3 +64,9 @@ def upsert_company_data(data: dict):
     except Exception as e:
         logger.error(f"Supabase upsert failed: {e}")
         return {"status": "error", "message": str(e)}
+
+def upsert_company_data(data: dict):
+    # Wrapper or alias if needed for backward compatibility
+    # But user specifically asked for 'save_scavenged_data'
+    company = data.get("buyer_name") or data.get("company_name")
+    return save_scavenged_data(company, data)
