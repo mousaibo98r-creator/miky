@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 import json
 import os
 
@@ -10,26 +9,37 @@ DATA_PATH = os.path.join(PROJECT_ROOT, "data", "combined_buyers.json")
 
 @st.cache_data
 def load_buyers():
-    """Load buyer data from JSON. Cached after first call."""
+    """Load buyer data from JSON. Cached after first call. Returns list of dicts."""
     if not os.path.exists(DATA_PATH):
         return None
     try:
         with open(DATA_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        return pd.DataFrame(data)
-    except Exception as e:
+        # Return as list of dicts - pages can convert to DataFrame if needed
+        return data
+    except Exception:
         return None
 
 
-def get_buyer_names(df):
+def get_buyer_names(data):
     """Return sorted list of buyer names for dropdowns."""
-    if df is None or df.empty:
+    if not data:
         return []
-    return sorted(df['buyer_name'].dropna().unique().tolist())
+    names = set()
+    for item in data:
+        name = item.get('buyer_name', '')
+        if name:
+            names.add(name)
+    return sorted(names)
 
 
-def get_countries(df):
+def get_countries(data):
     """Return sorted list of unique countries."""
-    if df is None or df.empty:
+    if not data:
         return []
-    return sorted(df['country_english'].dropna().unique().tolist())
+    countries = set()
+    for item in data:
+        c = item.get('country_english', '')
+        if c:
+            countries.add(c)
+    return sorted(countries)

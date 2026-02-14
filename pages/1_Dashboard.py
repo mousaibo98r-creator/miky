@@ -10,7 +10,8 @@ import random
 from services.data_loader import load_buyers
 
 # --- Data loads AFTER title renders ---
-df = load_buyers()
+raw_data = load_buyers()
+df = pd.DataFrame(raw_data) if raw_data else None
 
 st.markdown("### Search Exporters")
 search_query = st.text_input("Enter Exporter Name, ID, or Region", placeholder="Search...")

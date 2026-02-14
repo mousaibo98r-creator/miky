@@ -8,7 +8,7 @@ import asyncio
 from services.data_loader import load_buyers, get_buyer_names, get_countries
 
 # --- Data loads AFTER title ---
-df = load_buyers()
+data = load_buyers()
 
 # Check API key availability
 api_key = os.environ.get('DEEPSEEK_API_KEY', '')
@@ -20,24 +20,27 @@ st.markdown("### Select Buyer to Enrich")
 col1, col2 = st.columns(2)
 
 with col1:
-    buyer_names = get_buyer_names(df)
+    buyer_names = get_buyer_names(data)
     if buyer_names:
         selected_buyer = st.selectbox("Buyer Name", options=buyer_names)
     else:
         selected_buyer = st.text_input("Buyer Name", placeholder="Enter buyer name...")
 
 with col2:
-    country_list = get_countries(df)
+    country_list = get_countries(data)
     if country_list:
         selected_country = st.selectbox("Country", options=country_list)
     else:
         selected_country = st.text_input("Country", placeholder="Enter country...")
 
 # Show current data for selected buyer
-if df is not None and selected_buyer:
-    match = df[df['buyer_name'] == selected_buyer]
-    if not match.empty:
-        record = match.iloc[0]
+if data and selected_buyer:
+    record = None
+    for item in data:
+        if item.get('buyer_name') == selected_buyer:
+            record = item
+            break
+    if record:
         with st.expander("Current Data", expanded=True):
             c1, c2 = st.columns(2)
             with c1:

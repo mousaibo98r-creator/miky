@@ -14,16 +14,8 @@ try:
 except ImportError:
     pass  # dotenv not required on Streamlit Cloud
 
-# Bridge st.secrets → os.environ so services can use os.environ.get()
-try:
-    for key in ("SUPABASE_URL", "SUPABASE_KEY", "DEEPSEEK_API_KEY"):
-        if key not in os.environ and key in st.secrets:
-            os.environ[key] = st.secrets[key]
-except Exception:
-    pass
-
 # =====================================================================
-# PAGE CONFIG - FIRST STREAMLIT COMMAND
+# PAGE CONFIG - MUST BE FIRST STREAMLIT COMMAND
 # =====================================================================
 st.set_page_config(
     page_title="Export Analytics Platform",
@@ -31,6 +23,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Bridge st.secrets → os.environ AFTER set_page_config
+try:
+    if hasattr(st, 'secrets'):
+        for key in ("SUPABASE_URL", "SUPABASE_KEY", "DEEPSEEK_API_KEY"):
+            if key not in os.environ and key in st.secrets:
+                os.environ[key] = str(st.secrets[key])
+except Exception:
+    pass
 
 # =====================================================================
 # LIGHTWEIGHT HOME PAGE - NO pandas, plotly, supabase, or AI imports
@@ -97,7 +98,7 @@ st.subheader("System Status")
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    data_file = os.path.join(os.path.dirname(__file__), "data", "combined_buyers.json")
+    data_file = os.path.join(PROJECT_ROOT, "data", "combined_buyers.json")
     if os.path.exists(data_file):
         size_mb = os.path.getsize(data_file) / (1024 * 1024)
         st.success(f"\u2705 Data file loaded ({size_mb:.1f}MB)")

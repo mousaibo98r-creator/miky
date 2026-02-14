@@ -8,7 +8,8 @@ import time
 from services.data_loader import load_buyers
 
 # --- Data loads AFTER title renders ---
-df = load_buyers()
+raw_data = load_buyers()
+df = pd.DataFrame(raw_data) if raw_data else None
 
 if df is not None and not df.empty:
     df_intel = df.copy()
