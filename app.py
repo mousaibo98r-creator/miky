@@ -110,10 +110,26 @@ with col_profile:
         </div>
         """, unsafe_allow_html=True)
         
+        # Check Session State for Enriched Data
+        enriched_key = f"enriched_{company_name}"
+        scavenged_data = st.session_state.get(enriched_key, {})
+        
+        # Merge Source + Scavenged Data for Display
+        display_email = record.get("email", "")
+        if not display_email and scavenged_data.get("emails"):
+             display_email = ", ".join(scavenged_data["emails"])
+             
+        display_phone = record.get("phone", "")
+        if not display_phone and scavenged_data.get("phones"):
+             display_phone = ", ".join(scavenged_data["phones"])
+
         # Current Data
-        st.write("### \U0001f4ca Current Data")
-        st.text_input("Email", value=str(record.get("email", "")), disabled=True)
-        st.text_input("Phone", value=str(record.get("phone", "")), disabled=True)
+        st.write("### \U0001f4ca Contact Info")
+        st.text_input("Email", value=str(display_email), disabled=True)
+        st.text_input("Phone", value=str(display_phone), disabled=True)
+        
+        if scavenged_data:
+            st.info("Showing enriched data from AI scan.")
         
         st.markdown("---")
         
@@ -139,8 +155,8 @@ with col_profile:
             if result and "error" not in result:
                 st.success("New Data Found!")
                 
-                # Show Diff
-                st.json(result)
+                # Save to Session State
+                st.session_state[enriched_key] = result
                 
                 # Auto-Save
                 save_payload = {
@@ -155,6 +171,8 @@ with col_profile:
                         st.toast("Saved to Supabase!", icon="\U0001f4be")
                     else:
                         st.warning(f"Could not save: {db_res.get('message')}")
+                        
+                st.rerun()
             else:
                 st.error(f"Scavenge Failed: {result.get('message', 'Unknown error')}")
                 
