@@ -143,7 +143,8 @@ with col_profile:
         if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True):
             agent = SearchAgent()
             
-            status = st.status(f"Scavenging for {company_name}...", expanded=True)
+            # User Requested Spinner Message
+            status = st.status("Scavenging intelligence from the web...", expanded=True)
             
             async def run_scavenge():
                 # Callback wrapper
