@@ -1,3 +1,5 @@
+import textwrap
+
 import streamlit as st
 
 st.title("\U0001f578\ufe0f Intelligence Matrix")
@@ -41,8 +43,8 @@ else:
     df_intel = pd.DataFrame(mock_data)
     st.info("No data file found. Showing demo data.")
 
-# --- Layout ---
-col_filters, col_table, col_profile = st.columns([1, 3, 2])
+# --- Layout: Adjusted columns [Filters, Table, Profile] ---
+col_filters, col_table, col_profile = st.columns([1.2, 5, 2.8])
 
 with col_filters:
     st.markdown("### Filters")
@@ -95,7 +97,7 @@ with col_profile:
             .obsidian-card {
                 background-color: #111;
                 border: 1px solid #333;
-                border_radius: 8px;
+                border-radius: 8px;
                 padding: 24px;
                 color: #e0e0e0;
                 font-family: 'Segoe UI', sans-serif;
@@ -201,7 +203,7 @@ with col_profile:
             return html
 
         # --- Obsidian Style Card (Real Data) ---
-        card_content = f"""
+        card_content = textwrap.dedent(f"""
             <!-- Header -->
             <div class="obs-header">{buyer_raw}</div>
             <div class="obs-sub">ENGLISH: {english_name}</div>
@@ -240,7 +242,7 @@ with col_profile:
             </div>
 
             <div class="obs-scavenge-tag">ID: Scavenged X</div>
-        """
+        """)
 
         st.markdown(f'<div class="obsidian-card">{card_content}</div>', unsafe_allow_html=True)
 
@@ -263,7 +265,7 @@ with col_profile:
 
     else:
         # --- Empty Skeleton State ---
-        skeleton_content = """
+        skeleton_content = textwrap.dedent("""
             <div class="obs-header" style="color:#333">NO SELECTION</div>
             <div class="obs-sub" style="color:#333">PLEASE SELECT A ROW</div>
 
@@ -291,7 +293,7 @@ with col_profile:
             <div style="flex-grow:1;display:flex;align-items:center;justify-content:center;height:100px;color:#444;font-style:italic;border-top:1px solid #222;margin-top:20px">
                 Select a buyer from the matrix to view intelligence profile.
             </div>
-        """
+        """)
         st.markdown(
             f'<div class="obsidian-card">{skeleton_content}</div>',
             unsafe_allow_html=True,
