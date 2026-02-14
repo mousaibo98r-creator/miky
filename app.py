@@ -35,13 +35,10 @@ if df.empty:
     df = pd.DataFrame(columns=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"])
 
 # --- 1. BOSS VIEW METRICS ---
-# Calculate Metrics
 total_companies = len(df)
-# Enriched = has email (and email is not empty string or 'None')
-enriched_count = df[df["email"].apply(lambda x: x is not None and str(x).strip().lower() not in ["", "none"])].shape[0]
+enriched_count = df[df["email"].apply(lambda x: x is not None and str(x).strip().lower() not in ["", "none", "nan"])].shape[0]
 total_value = df["total_usd"].sum() if "total_usd" in df.columns else 0
 
-# Display Metrics
 m1, m2, m3 = st.columns(3)
 m1.metric("Total Companies", total_companies)
 m2.metric("Enriched Leads", enriched_count, delta=f"{round((enriched_count/total_companies)*100, 1)}%" if total_companies else "0%")
@@ -65,7 +62,6 @@ with st.sidebar:
     st.divider()
     
     st.header("Filters")
-    # Country Filter
     country_col = "destination_country"
     
     if country_col in df.columns:
@@ -123,37 +119,7 @@ with col_table:
     # Save Button
     if st.button("\U0001f4be Save Changes", type="primary"):
         with st.spinner("Saving changes to Supabase..."):
-            # Get edited data from session state if available, or rely on df
-            # st.data_editor returns the edited dataframe directly in 'event' ONLY if on_select is NOT used?
-            # EXTENSIVE NOTE: In new Streamlit, st.data_editor returns the EDITED dataframe.
-            # 'event' is the return value. If on_select is used, does it still return DF?
-            # Wait, documentation says data_editor returns the edited data. 
-            # BUT if on_change/on_select are used, it might return an event object in some versions?
-            # Actually, standard behavior: returns the edited DataFrame.
-            # The 'selection' is ACCESSED via `event.selection` IF available?
-            # Ah, `st.data_editor` returns the modified dataframe. It does NOT return an event object with selection like `st.dataframe` does in 1.35+.
-            # `st.dataframe` with `on_select` returns a selection object.
-            # `st.data_editor` returns the EDITED DATA.
-            
-            # Correction: As of Streamlit 1.35, `st.data_editor` ALSO supports `on_select`.
-            # If `on_select` is set, `st.data_editor` returns the EDITED DATA FRAME? 
-            # Wait, checking docs... "The return value is the edited dataframe."
-            # The selection state is in `st.session_state[key]["selection"]`? NO.
-            # Actually, recent updates added `event.selection` on `st.dataframe`.
-            # For `st.data_editor`, usually we use it for editing.
-            # The User requested: "Use selection_mode='single-row' and on_select='rerun' inside st.data_editor."
-            
-            # Code adaptation:
-            # We need to capture both edits AND selection.
-            # If `st.data_editor` returns the DF, then where is the selection?
-            # It seems `on_select` works with `st.dataframe`. Does it work with `st.data_editor`?
-            # Yes, as of 1.35.
-            # But the return value is still the Dataframe.
-            # So `event` will be the DataFrame.
-            # The selection is accessible via `st.session_state.editor["selection"]["rows"]`!
-            
-            # Using the `key="editor"` allows access to selection state.
-            
+            # Get latest data from editor (returned by st.data_editor)
             records_to_save = event.to_dict("records")
             res = bulk_upsert_buyers(records_to_save)
             
@@ -172,26 +138,20 @@ with col_profile:
     # Logic to find selected row
     selected_row_index = None
     
-    # Check session state for selection from data_editor
-    # Key is 'editor'
-    editor_state = st.session_state.get("editor")
-    
-    # Debug print or logic check
-    # In some versions, it's a dict with "selection" -> "rows": [...]
-    if editor_state and isinstance(editor_state, dict) and "selection" in editor_state:
-         rows = editor_state["selection"].get("rows", [])
-         if rows:
-             selected_row_index = rows[0]
-    
-    # Fallback to st.dataframe logic if using that, but we replaced it.
-    
+    # Check session state for selection keys
+    if "editor" in st.session_state:
+        selection = st.session_state["editor"].get("selection", {})
+        rows = selection.get("rows", [])
+        if rows:
+            selected_row_index = rows[0]
+            
     if selected_row_index is not None:
         try:
             # Map index to filtered dataframe
-            # Note: data_editor index usually corresponds to the input dataframe index (dff)
-            # Be careful with index resets. We used hide_index=True but index is preserved in backend.
-            # If dff has custom index, data_editor preserves it.
-            # dff.iloc[selected_row_index] works if index is 0..N positionally relative to View.
+            # Be mindful of index filtering. reset_index() might be needed for mapping if indices are non-sequential?
+            # data_editor operates on the passed dataframe index.
+            # dff.iloc works positionally. BUT the selection index from data_editor is based on the DISPLAYED index (0 to N).
+            # So dff.iloc[selected_row_index] is correct IF dff is the exact input.
             
             record = dff.iloc[selected_row_index]
             
@@ -207,42 +167,42 @@ with col_profile:
             </div>
             """, unsafe_allow_html=True)
             
-            # --- 3. ROBUST NONE HANDLING & CLICKABLE LINKS ---
-            def clean_val(v):
-                if v is None: return None
+            # --- 3. ROBUST HIDDEN FIELDS ---
+            def is_valid(v):
+                if v is None: return False
                 s = str(v).strip()
-                if s.lower() == "none" or s == "": return None
-                return s
+                return s.lower() not in ["none", "nan", "null", ""]
 
             st.write("### \U0001f4ca Contact Info")
             
+            has_info = False
+            
             # Email
-            email_val = clean_val(record.get("email"))
-            if email_val:
-                # Handle lists/commas? If comma separated, maybe just link the first one or generic
-                # User asked for clickable.
-                # If multiple, complex to link. 
-                # Let's simple format:
-                st.markdown(f"**Email:** [{email_val}](mailto:{email_val.split(',')[0].strip()})")
-            else:
-                st.caption("Email: *Not Available*")
+            email_val = record.get("email")
+            if is_valid(email_val):
+                has_info = True
+                clean_email = str(email_val).strip()
+                first_email = clean_email.split(',')[0].strip()
+                st.markdown(f"**Email:** [{clean_email}](mailto:{first_email})")
 
             # Phone
-            phone_val = clean_val(record.get("phone"))
-            if phone_val:
-                st.markdown(f"**Phone:** `{phone_val}`")
-            else:
-                 st.caption("Phone: *Not Available*")
+            phone_val = record.get("phone")
+            if is_valid(phone_val):
+                has_info = True
+                st.markdown(f"**Phone:** `{str(phone_val).strip()}`")
                  
             # Website
-            web_val = clean_val(record.get("website"))
-            if web_val:
-                link = web_val
+            web_val = record.get("website")
+            if is_valid(web_val):
+                has_info = True
+                clean_web = str(web_val).strip()
+                link = clean_web
                 if not link.startswith("http"):
                     link = "https://" + link
-                st.markdown(f"**Website:** [{web_val}]({link})")
-            else:
-                 st.caption("Website: *Not Available*")
+                st.markdown(f"**Website:** [{clean_web}]({link})")
+            
+            if not has_info:
+                st.info("No contact information available.")
             
             st.markdown("---")
             
@@ -276,7 +236,6 @@ with col_profile:
                     
         except Exception as e:
             st.info("Select a company row to view details.")
-            # logging.error(f"Selection error: {e}")
             
     else:
         st.info("Select a row in the table to view Entity Profile.")
