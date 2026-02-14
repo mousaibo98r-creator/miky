@@ -87,6 +87,83 @@ with col_table:
 
 with col_profile:
     st.markdown("### Entity Profile")
+
+    # --- CSS (Global for Obsidian Card) ---
+    st.markdown(
+        """
+        <style>
+            .obsidian-card {
+                background-color: #111;
+                border: 1px solid #333;
+                border_radius: 8px;
+                padding: 24px;
+                color: #e0e0e0;
+                font-family: 'Segoe UI', sans-serif;
+                min-height: 480px; /* Ensure visual presence */
+            }
+            .obs-header {
+                font-size: 1.6rem;
+                font-weight: 700;
+                color: #a38cf4; /* Light purple */
+                margin-bottom: 4px;
+                line-height: 1.2;
+            }
+            .obs-sub {
+                font-size: 0.8rem;
+                color: #888;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 24px;
+            }
+            .obs-section-label {
+                font-size: 0.7rem;
+                color: #666;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                font-weight: 600;
+                margin-bottom: 8px;
+            }
+            .obs-value {
+                font-size: 1.1rem;
+                font-weight: 600;
+                color: #fff;
+            }
+            .obs-placeholder {
+                color: #444;
+                font-style: italic;
+            }
+            .obs-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 24px;
+                margin-bottom: 24px;
+                border-bottom: 1px solid #222;
+                padding-bottom: 24px;
+            }
+            .obs-list-section {
+                margin-bottom: 20px;
+            }
+            .obs-list-title {
+                color: #a38cf4;
+                font-size: 0.85rem;
+                font-weight: bold;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+            }
+            .obs-scavenge-tag {
+                display: inline-block;
+                background-color: #222;
+                color: #666;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 0.7rem;
+                margin-top: 10px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     if event and event.selection.rows:
         idx = event.selection.rows[0]
         record = dff.iloc[idx]
@@ -123,82 +200,11 @@ with col_profile:
                 html += f"<div style='margin-bottom:4px;color:#eee;font-size:0.9rem'><span style='color:{color};margin-right:8px'>●</span>{it}</div>"
             return html
 
-        # --- Obsidian Style Card ---
-        # We use a single HTML block for the card to ensure tight spacing and control
-
-        card_css = """
-        <style>
-            .obsidian-card {
-                background-color: #111;
-                border: 1px solid #333;
-                border_radius: 8px;
-                padding: 24px;
-                color: #e0e0e0;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            .obs-header {
-                font-size: 1.6rem;
-                font-weight: 700;
-                color: #a38cf4; /* Light purple */
-                margin-bottom: 4px;
-            }
-            .obs-sub {
-                font-size: 0.8rem;
-                color: #888;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 24px;
-            }
-            .obs-section-label {
-                font-size: 0.7rem;
-                color: #666;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                font-weight: 600;
-                margin-bottom: 8px;
-            }
-            .obs-value {
-                font-size: 1.1rem;
-                font-weight: 600;
-                color: #fff;
-            }
-            .obs-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 24px;
-                margin-bottom: 24px;
-                border-bottom: 1px solid #222;
-                padding-bottom: 24px;
-            }
-            .obs-list-section {
-                margin-bottom: 20px;
-            }
-            .obs-list-title {
-                color: #a38cf4;
-                font-size: 0.85rem;
-                font-weight: bold;
-                text-transform: uppercase;
-                margin-bottom: 10px;
-            }
-            .obs-scavenge-tag {
-                display: inline-block;
-                background-color: #222;
-                color: #666;
-                padding: 2px 6px;
-                border-radius: 4px;
-                font-size: 0.7rem;
-                margin-top: 10px;
-            }
-        </style>
-        """
-
-        card_html = f"""
-        {card_css}
-        <div class="obsidian-card">
+        # --- Obsidian Style Card (Real Data) ---
+        card_content = f"""
             <!-- Header -->
             <div class="obs-header">{buyer_raw}</div>
             <div class="obs-sub">ENGLISH: {english_name}</div>
-            
 
             <!-- Metrics Row -->
             <div class="obs-grid">
@@ -211,7 +217,7 @@ with col_profile:
                     <div class="obs-value">${volume:,.2f}</div>
                 </div>
             </div>
-            
+
             <!-- Contact Info -->
             <div class="obs-list-section">
                 <div class="obs-list-title">EMAILS</div>
@@ -232,12 +238,11 @@ with col_profile:
                 <div class="obs-list-title">ADDRESSES</div>
                 {render_list_items(addresses, "#ccc")}
             </div>
-            
+
             <div class="obs-scavenge-tag">ID: Scavenged X</div>
-        </div>
         """
 
-        st.markdown(card_html, unsafe_allow_html=True)
+        st.markdown(f'<div class="obsidian-card">{card_content}</div>', unsafe_allow_html=True)
 
         st.markdown("")  # Spacer
 
@@ -257,4 +262,37 @@ with col_profile:
                 st.toast("Data scavenged!", icon="\u2705")
 
     else:
-        st.info("Select a ROW from the matrix to view the detailed entity profile.")
+        # --- Empty Skeleton State ---
+        skeleton_content = """
+            <div class="obs-header" style="color:#333">NO SELECTION</div>
+            <div class="obs-sub" style="color:#333">PLEASE SELECT A ROW</div>
+
+            <div class="obs-grid" style="border-color:#222">
+                <div>
+                    <div class="obs-section-label" style="color:#333">LOCATION</div>
+                    <div class="obs-value obs-placeholder">---</div>
+                </div>
+                <div>
+                    <div class="obs-section-label" style="color:#333">VOLUME</div>
+                    <div class="obs-value obs-placeholder">---</div>
+                </div>
+            </div>
+
+            <div class="obs-list-section">
+                <div class="obs-list-title" style="color:#444">EMAILS</div>
+                <div class="obs-placeholder" style="font-size:0.85rem">---</div>
+            </div>
+
+            <div class="obs-list-section">
+                <div class="obs-list-title" style="color:#444">WEBSITES</div>
+                <div class="obs-placeholder" style="font-size:0.85rem">---</div>
+            </div>
+
+            <div style="flex-grow:1;display:flex;align-items:center;justify-content:center;height:100px;color:#444;font-style:italic;border-top:1px solid #222;margin-top:20px">
+                Select a buyer from the matrix to view intelligence profile.
+            </div>
+        """
+        st.markdown(
+            f'<div class="obsidian-card">{skeleton_content}</div>',
+            unsafe_allow_html=True,
+        )
