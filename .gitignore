@@ -26,8 +26,8 @@ venv/
 .venv/
 ENV/
 
-# Streamlit
-.streamlit/
+# Streamlit secrets (keep config tracked)
+.streamlit/secrets.toml
 
 # Supabase
 .supabase/
