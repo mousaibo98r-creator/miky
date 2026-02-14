@@ -1,160 +1,218 @@
-import json
 import os
-import re
+import time
+import json
 import logging
 import asyncio
+from typing import List, Dict, Any, Optional
 
-import requests
-from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
 from openai import AsyncOpenAI
+from dotenv import load_dotenv
 
-# Configure logger
+# Load env variables (API Keys)
+load_dotenv()
+
+# Configure Logger
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class SearchAgent:
-    """
-    The 'Brain' for scavenging company data.
-    Uses DuckDuckGo for discovery and DeepSeek via OpenAI for extraction/cleaning.
-    """
-    
-    def __init__(self, api_key=None):
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        if not self.api_key:
-            logger.warning("DEEPSEEK_API_KEY not found. Agent will fail if called.")
-            
+    def __init__(self):
+        """
+        Initialize the SearchAgent with DeepSeek client (OpenAI compatible).
+        """
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            logger.warning("DEEPSEEK_API_KEY not found in environment variables.")
+        
+        # Initialize DeepSeek Client
         self.client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url="https://api.deepseek.com"
+            api_key=api_key,
+            base_url="https://api.deepseek.com/v1"
         )
 
-    async def find_company_leads(self, company_name, country, callback=None):
+    async def _search_duckduckgo(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
         """
-        Main entry point. Finds leads for a company.
-        Returns a dict: {emails: [], phones: [], website: str, address: str}
+        Perform a DuckDuckGo search and return results.
+        Handles rate limits gracefully.
         """
-        query = f"{company_name} {country} official website contact email phone"
+        results = []
+        try:
+            # Synchronous DDGS call inside async method (could be wrapped in run_in_executor if needed)
+            # DDGS() context manager limits scope
+            with DDGS() as ddgs:
+                search_gen = ddgs.text(query, max_results=max_results)
+                for r in search_gen:
+                    results.append({
+                        "title": r.get("title", ""),
+                        "href": r.get("href", ""),
+                        "body": r.get("body", "")
+                    })
+            logger.info(f"Found {len(results)} results for query: '{query}'")
+        except Exception as e:
+            logger.error(f"DuckDuckGo search error for query '{query}': {e}")
         
-        if callback: callback(f"Searching for '{company_name}'...")
-        
-        # 1. Search DB/Web
-        search_results = self._perform_search(query)
-        
-        if not search_results or "error" in search_results[0]:
-             error_msg = search_results[0].get("error", "No results")
-             if callback: callback(f"Search failed: {error_msg}")
-             return {"status": "error", "message": error_msg}
+        return results
 
-        # 2. Pick best URL and fetch
-        # We look for the first non-directory URL
-        target_url = None
-        for r in search_results:
-             if r.get("url"):
-                 target_url = r["url"]
-                 break
-        
-        raw_page_content = ""
-        if target_url:
-            if callback: callback(f"Fetching {target_url}...")
-            page_data = self._fetch_page(target_url)
-            # Combine snippets and page content for the AI
-            raw_page_content = page_data.get("page_text_preview", "")
-            # Also grab regex-found contacts as backup
-            regex_contacts = {
-                "emails": page_data.get("emails_found", []),
-                "phones": page_data.get("phones_found", [])
-            }
-        else:
-            regex_contacts = {}
-
-        # 3. Clean with DeepSeek
-        if callback: callback("Analyzing data with AI...")
-        
-        # Construct context for AI
-        context = f"""
-        COMPANY: {company_name}
-        COUNTRY: {country}
-        
-        SEARCH RESULTS:
-        {json.dumps(search_results[:3])}
-        
-        WEBPAGE CONTENT ({target_url}):
-        {raw_page_content[:4000]}
+    async def find_company_leads(self, company_name: str, country: str = "", callback=None) -> Dict[str, Any]:
         """
+        Advanced 'Pro Scraper' Logic:
+        1. Multi-Query Strategy (3 distinct searches).
+        2. Aggregation of search snippets.
+        3. DeepSeek Analysis for structured JSON extraction.
+        4. Fallback for Website URL.
+        """
+        if not company_name:
+            return {"error": "Company name is required."}
+
+        start_time = time.time()
+        if callback: callback(f"Starting advanced search for: {company_name}")
+
+        # --- 1. Multi-Query Strategy ---
+        queries = [
+            f"{company_name} {country} official website contact",
+            f"{company_name} {country} email address phone number",
+            f"{company_name} {country} export contact"
+        ]
+
+        all_results = []
+        seen_urls = set()
+        
+        # Execute searches (sequentially to avoid rate limits, or carefully async)
+        for q in queries:
+            if callback: callback(f"Searching: {q}...")
+            results = await self._search_duckduckgo(q, max_results=4)
+            
+            # Deduplicate and Collect
+            for r in results:
+                if r['href'] not in seen_urls:
+                    all_results.append(r)
+                    seen_urls.add(r['href'])
+            
+            # Brief pause to be polite to DDG
+            await asyncio.sleep(1)
+
+        if not all_results:
+            if callback: callback("No search results found.")
+            return {"status": "error", "message": "No search results found."}
+
+        # --- 2. Aggregate Text Context ---
+        # Limit to reasonable size for LLM context window
+        context_parts = []
+        for i, r in enumerate(all_results[:15]): # Top 15 unique results
+            context_parts.append(f"Result {i+1}:")
+            context_parts.append(f"Title: {r['title']}")
+            context_parts.append(f"URL: {r['href']}")
+            context_parts.append(f"Snippet: {r['body']}")
+            context_parts.append("---")
+        
+        combined_context = "\n".join(context_parts)
+        
+        # --- 3. DeepSeek Intelligence ---
+        if callback: callback("Analyzing aggregated data with DeepSeek...")
         
         system_prompt = (
-            "You are a data extraction engine. "
-            "Extract the Website, Phone, Email, and Address into a strict JSON format. "
-            "Keys: emails (list), phones (list), website (string), address (string). "
-            "Do not say anything else. Return ONLY the JSON."
+            "You are a Data Extraction Expert. "
+            "Analyze the following search results and extract the Website, Email, Phone, and Address. "
+            "If multiple exist, list them all separated by commas. "
+            "Return strictly JSON with keys: email (list), phone (list), website (string), address (string). "
+            "If a field is not found, return null or empty list."
         )
+
+        user_prompt = f"""
+        Target Company: {company_name}
+        Country Context: {country}
+        
+        Search Results Aggregation:
+        {combined_context}
+        """
 
         try:
             response = await self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": context}
-                ]
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1, # Low temp for factual extraction
+                response_format={ "type": "json_object" } # Force JSON if supported, else rely on prompt
             )
+            
             content = response.choices[0].message.content
-            cleaned_data = self._parse_json(content)
             
-            # Merge regex findings if AI missed them (optional, but good for robustness)
-            if isinstance(cleaned_data, dict):
-                if not cleaned_data.get("emails") and regex_contacts.get("emails"):
-                    cleaned_data["emails"] = regex_contacts["emails"]
-                if not cleaned_data.get("phones") and regex_contacts.get("phones"):
-                    cleaned_data["phones"] = regex_contacts["phones"]
-                if not cleaned_data.get("website") and target_url:
-                    cleaned_data["website"] = target_url
-            
-            return cleaned_data
+            # Robust JSON Parsing
+            try:
+                # Remove code blocks if present
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[0].strip()
+                
+                extracted_data = json.loads(content)
+            except json.JSONDecodeError:
+                logger.error("Failed to parse DeepSeek JSON response.")
+                extracted_data = {}
 
         except Exception as e:
-            logger.error(f"AI Extraction failed: {e}")
-            return {"status": "error", "message": str(e)}
+            logger.error(f"DeepSeek API Error: {e}")
+            extracted_data = {}
+            if callback: callback("AI Analysis failed. Attempting fallback...")
 
-    def _perform_search(self, query):
-        try:
-            from duckduckgo_search import DDGS
-            results = list(DDGS().text(query, max_results=5))
-            clean_results = []
-            for r in results:
-                clean_results.append({
-                    "title": r.get("title"),
-                    "url": r.get("href"),
-                    "snippet": r.get("body")
-                })
-            return clean_results
-        except Exception as e:
-            return [{"error": str(e)}]
-
-    def _fetch_page(self, url):
-        try:
-            resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-            resp.raise_for_status()
-            text = BeautifulSoup(resp.text, 'html.parser').get_text(separator=' ')
+        # --- 4. Fallback Mechanism & Normalization ---
+        
+        # Normalize keys to match database expectations (emails list, phones list)
+        final_data = {
+            "emails": [],
+            "phones": [],
+            "website": None,
+            "address": None,
+            "country": country
+        }
+        
+        # Process Emails
+        raw_email = extracted_data.get("email") or extracted_data.get("emails")
+        if isinstance(raw_email, list):
+            final_data["emails"] = [e for e in raw_email if isinstance(e, str)]
+        elif isinstance(raw_email, str) and raw_email:
+            # split by comma if AI returned string
+            final_data["emails"] = [e.strip() for e in raw_email.split(",")]
             
-            # Basic Regex for backup
-            emails = re.findall(r'[\w.+-]+@[\w-]+\.[\w.-]+', text)
-            phones = re.findall(r'\+?\d{10,15}', text)
-            
-            return {
-                "page_text_preview": text,
-                "emails_found": list(set(emails)),
-                "phones_found": list(set(phones))
-            }
-        except Exception:
-            return {}
+        # Process Phones
+        raw_phone = extracted_data.get("phone") or extracted_data.get("phones")
+        if isinstance(raw_phone, list):
+            final_data["phones"] = [p for p in raw_phone if isinstance(p, str)]
+        elif isinstance(raw_phone, str) and raw_phone:
+            final_data["phones"] = [p.strip() for p in raw_phone.split(",")]
 
-    def _parse_json(self, text):
-        if not text: return {}
-        try:
-            # Strip markdown
-            text = text.strip()
-            if "```" in text:
-                text = re.search(r'```(?:json)?(.*?)```', text, re.DOTALL).group(1)
-            return json.loads(text.strip())
-        except Exception:
-            # Fallback: simple dict error
-            return {"status": "error", "message": "Failed to parse AI JSON", "raw": text}
+        # Process Address
+        final_data["address"] = extracted_data.get("address")
+        if isinstance(final_data["address"], list):
+             final_data["address"] = ", ".join(final_data["address"])
+
+        # Process Website (Fallback Logic)
+        ai_website = extracted_data.get("website")
+        if ai_website and isinstance(ai_website, str) and "http" in ai_website:
+             final_data["website"] = ai_website
+        elif ai_website and isinstance(ai_website, list) and len(ai_website) > 0:
+             final_data["website"] = ai_website[0]
+        else:
+            # Fallback: Use the first search result URL that looks like a main page
+            # Simple heuristic: shortest URL in top 3 results that isn't a directory (like yellowpages)
+            potential_urls = [r['href'] for r in all_results[:5]]
+            if potential_urls:
+                # Just take the first one for now as a best guess fallback
+                final_data["website"] = potential_urls[0]
+                if callback: callback(f"AI missed website. Using fallback: {final_data['website']}")
+
+        # Final Cleanup
+        # Ensure we don't return empty lists if database expects None? 
+        # Actually our database logic handles lists, so it's fine.
+        
+        return final_data
+
+# Test block (run directly to verify)
+if __name__ == "__main__":
+    agent = SearchAgent()
+    logging.info("Running test search...")
+    res = asyncio.run(agent.find_company_leads("Erd Metal Inc", "USA"))
+    print(json.dumps(res, indent=2))
