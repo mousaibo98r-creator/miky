@@ -1,20 +1,16 @@
-# =====================================================================
-# Main Application Entry Point
-# =====================================================================
 import streamlit as st
-
-# 1. Wide Mode - First Command
-st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\U0001f578\ufe0f")
-
 import pandas as pd
 import asyncio
 import os
 import logging
 
+# 1. FORCE WIDE LAYOUT - MUST be the very first Streamlit command
+st.set_page_config(layout="wide", page_title="Intelligence Matrix", page_icon="\U0001f578\ufe0f")
+
 # Modular Imports
 from services.data_loader import load_buyers
 from services.search_agent import SearchAgent
-from services.database import upsert_company_data
+from services.database import save_scavenged_data
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,32 +35,35 @@ if df.empty:
 with st.sidebar:
     st.header("Filters")
     
-    # Country Filter
-    # User confirmed the column logic needs to be strict
-    country_col = "destination_country" 
+    # Country Filter (Strict Logic)
+    country_col = "destination_country"
     
-    # Fallback if column missing (safety check)
+    # Safety Check: Ensure column exists
     if country_col not in df.columns:
-         st.error(f"Column '{country_col}' not found in data. Please check JSON.")
-         st.stop()
+        st.error(f"Critical Error: Column '{country_col}' missing from dataset.")
+        st.stop()
 
+    # Get unique countries
     all_countries = sorted(df[country_col].dropna().unique().tolist())
+    
+    # User Selection
     selected_countries = st.multiselect("Select Country", options=all_countries)
     
     st.info(f"Loaded {len(df)} companies.")
 
-# --- Filter Logic (Strict) ---
-# Ensure dff is initialized from df
-dff = df.copy()
-
+# --- Apply Filter (Logic) ---
 if selected_countries:
-    dff = dff[dff[country_col].isin(selected_countries)]
+    # Strict filter: Only show rows where destination_country is in selection
+    dff = df[df[country_col].isin(selected_countries)].copy()
+else:
+    dff = df.copy()
 
-# --- Search Bar ---
+# --- Search Bar (Additional Filter) ---
 col_search, _ = st.columns([1, 2])
 with col_search:
     search_query = st.text_input("Search Company Name", placeholder="Type to filter table...")
     if search_query:
+        # Filter by buyer_name
         dff = dff[dff["buyer_name"].str.contains(search_query, case=False, na=False)]
 
 st.markdown(f"**Showing {len(dff)} companies**")
@@ -95,7 +94,6 @@ with col_profile:
     selected_rows = event.selection.rows
     
     if selected_rows:
-        # Get actual row from filtered dataframe
         # Map selection index to dataframe index
         row_idx = selected_rows[0]
         record = dff.iloc[row_idx]
@@ -111,21 +109,27 @@ with col_profile:
             <hr style="border-top:1px solid #333;">
         </div>
         """, unsafe_allow_html=True)
-         
+        
         # Check Session State for Enriched Data
         enriched_key = f"enriched_{company_name}"
         scavenged_data = st.session_state.get(enriched_key, {})
         
         # Merge Source + Scavenged Data for Display
         display_email = record.get("email", "")
+        # If no source email, check scavenged
         if not display_email and scavenged_data.get("emails"):
              display_email = ", ".join(scavenged_data["emails"])
+        # If source has list, join it
+        elif isinstance(display_email, list):
+             display_email = ", ".join(display_email)
              
         display_phone = record.get("phone", "")
         if not display_phone and scavenged_data.get("phones"):
              display_phone = ", ".join(scavenged_data["phones"])
+        elif isinstance(display_phone, list):
+             display_phone = ", ".join(display_phone)
 
-        # Current Data
+        # Current Data Display
         st.write("### \U0001f4ca Contact Info")
         st.text_input("Email", value=str(display_email), disabled=True)
         st.text_input("Phone", value=str(display_phone), disabled=True)
@@ -142,11 +146,11 @@ with col_profile:
             status = st.status(f"Scavenging for {company_name}...", expanded=True)
             
             async def run_scavenge():
-                # 3. Callback wrapper
+                # Callback wrapper
                 def log_status(msg):
                     status.write(msg)
                 
-                # 4. Search
+                # Search using Agent
                 return await agent.find_company_leads(company_name, country, callback=log_status)
 
             # Run Async
@@ -155,23 +159,20 @@ with col_profile:
             status.update(label="Scavenge Complete!", state="complete", expanded=False)
             
             if result and "error" not in result:
-                st.success("New Data Found!")
-                
-                # Save to Session State
+                # 1. Save to Session State (Instant UI Update)
                 st.session_state[enriched_key] = result
                 
-                # Auto-Save to Supabase
-                with st.spinner("Saving to Database..."):
-                    from services.database import save_scavenged_data
+                # 2. Auto-Save to Supabase 'mousa' table
+                with st.spinner("Saving logic to Supabase..."):
                     
-                    # Prepare payload (flattening is done inside save_scavenged_data)
+                    # Prepare payload: pass raw result, database.py handles flattening
                     payload = result.copy()
-                    # We pass the raw result logic to database.py which handles flattening
                     
+                    # Save!
                     db_res = save_scavenged_data(company_name, payload)
                     
                     if db_res and db_res.get("status") == "success":
-                        st.success(f"\u2705 New intelligence saved to Supabase for {company_name}")
+                        st.success(f"\u2705 New intelligence saved to Supabase (mousa) for {company_name}")
                     else:
                         st.warning(f"Could not save: {db_res.get('message')}")
                         
