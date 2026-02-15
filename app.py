@@ -132,7 +132,7 @@ with col_table:
         hide_index=True,
         num_rows="dynamic", 
         key="editor",
-        on_select="rerun",  # Critical for selection sync
+        # on_select="rerun",  # Removed to fix Streamlit Cloud TypeError
         selection_mode="single-row" 
     )
     
