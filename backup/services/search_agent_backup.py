@@ -6,29 +6,17 @@ import asyncio
 from typing import Dict, Any
 from dotenv import load_dotenv
 
+# Import the advanced DeepSeekClient
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from deepseek_client import DeepSeekClient
+
 # Load env variables (API Keys)
 load_dotenv()
 
 # Configure Logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Import DeepSeekClient - handle different import scenarios
-try:
-    # Try direct import (if deepseek_client is in same directory or parent)
-    from deepseek_client import DeepSeekClient
-except ImportError:
-    try:
-        # Try from parent directory
-        import sys
-        import os
-        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        sys.path.insert(0, parent_dir)
-        from deepseek_client import DeepSeekClient
-    except ImportError as e:
-        logger.error(f"Failed to import DeepSeekClient: {e}")
-        logger.error("Make sure deepseek_client.py is in your project root directory")
-        raise
 
 class SearchAgent:
     def __init__(self):
