@@ -9,12 +9,16 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from services.data_loader import load_buyers
+from services.database import fetch_all_buyers
 
 random.seed(42)  # Deterministic mock data
 
 # --- Data loads AFTER title renders ---
-raw_data = load_buyers()
+@st.cache_data(ttl=300)
+def get_dashboard_data():
+    return fetch_all_buyers()
+
+raw_data = get_dashboard_data()
 df = pd.DataFrame(raw_data) if raw_data else None
 
 st.markdown("### Search Exporters")
@@ -71,7 +75,13 @@ with col2:
     )
 with col3:
     st.markdown(
-        f'<div style="background:#262730;padding:20px;border-radius:10px;border:1px solid #41424b;text-align:center"><div style="font-size:1rem;color:#fafafa">YoY Growth</div><div style="font-size:2rem;font-weight:bold;color:#00d2ff">{growth}</div></div>',
+        """
+    <div style="background:#262730;padding:20px;border-radius:10px;border:1px solid #41424b;text-align:center">
+        <div style="font-size:2rem">\U0001f4c2</div>
+        <div style="color:#00d2ff;font-weight:bold">Database</div>
+        <div style="color:#999;font-size:0.9rem">Supabase Explorer</div>
+    </div>
+    """,
         unsafe_allow_html=True,
     )
 

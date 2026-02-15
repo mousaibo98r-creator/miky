@@ -207,32 +207,78 @@ with col_profile:
             st.markdown("---")
             
             # Scavenge Button
-            if st.button("\U0001f985 Scavenge Data", type="primary", use_container_width=True, key=f"scavenge_{company_name}"):
+            if st.button("\U0001f50d Scavenge Data", type="primary", use_container_width=True, key=f"scavenge_{company_name}"):
                 agent = SearchAgent()
-                status = st.status("Scavenging intelligence from the web...", expanded=True)
+                status_container = st.status("🔍 Scavenging intelligence from the web...", expanded=True)
                 
                 async def run_scavenge():
                     def log_status(msg):
-                        status.write(msg)
+                        status_container.write(msg)
                     return await agent.find_company_leads(company_name, country, callback=log_status)
 
-                result = asyncio.run(run_scavenge())
-                status.update(label="Scavenge Complete!", state="complete", expanded=False)
-                
-                if result and "error" not in result:
-                    with st.spinner("Saving logic to Supabase..."):
-                        payload = result.copy()
-                        db_res = save_scavenged_data(company_name, payload)
-                        if db_res and db_res.get("status") == "success":
-                            st.success(f"Saved to Supabase!")
-                            st.toast('Data saved! Refreshing view...', icon='🔄')
-                            time.sleep(1.5)
-                            st.cache_data.clear()
-                            st.rerun()
+                try:
+                    # Run the search
+                    result = asyncio.run(run_scavenge())
+                    
+                    # Check if we got valid data
+                    if result and result.get("status") != "error":
+                        status_container.update(label="✅ Scavenge Complete!", state="complete", expanded=False)
+                        
+                        # Show what we found
+                        found_items = []
+                        if result.get("emails"):
+                            found_items.append(f"{len(result['emails'])} email(s)")
+                        if result.get("phones"):
+                            found_items.append(f"{len(result['phones'])} phone(s)")
+                        if result.get("website"):
+                            found_items.append("website")
+                        if result.get("address"):
+                            found_items.append("address")
+                        
+                        if found_items:
+                            st.info(f"📊 Found: {', '.join(found_items)}")
                         else:
-                            st.warning(f"Could not save: {db_res.get('message')}")
-                else:
-                    st.error(f"Scavenge Failed: {result.get('message')}")
+                            st.warning("⚠️ No contact information found for this company")
+                        
+                        # Save to Supabase
+                        with st.spinner("💾 Saving to database..."):
+                            db_res = save_scavenged_data(company_name, result)
+                            
+                            if db_res and db_res.get("status") == "success":
+                                st.success(f"✅ {db_res.get('message', 'Saved successfully!')}")
+                                st.toast('🔄 Data saved! Refreshing...', icon='✅')
+                                time.sleep(1)
+                                
+                                # Clear cache and refresh
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Save failed: {db_res.get('message')}")
+                    else:
+                        status_container.update(label="❌ Search Failed", state="error", expanded=True)
+                        error_msg = result.get('message', 'Unknown error occurred')
+                        st.error(f"❌ {error_msg}")
+                        
+                        # Show helpful suggestions
+                        with st.expander("💡 Troubleshooting Tips"):
+                            st.markdown("""
+                            **Possible reasons:**
+                            1. Company name might be spelled differently online
+                            2. Company might be a smaller/newer business without web presence
+                            3. Company might operate under a different legal name
+                            4. Search API rate limits (wait a moment and try again)
+                            
+                            **What to try:**
+                            - Check if the company name is exact
+                            - Try searching manually on Google first
+                            - Look for alternative company names
+                            - Try again in a few seconds
+                            """)
+                        
+                except Exception as e:
+                    status_container.update(label="❌ Error Occurred", state="error", expanded=True)
+                    st.error(f"❌ Unexpected error: {str(e)}")
+                    logging.error(f"Scavenge error for {company_name}: {e}")
                     
         except Exception as e:
             st.info("Select a company row to view details.")
