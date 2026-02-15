@@ -33,6 +33,14 @@ df = get_data_from_db()
 # Initialize empty DF if needed to prevent errors
 if df.empty:
     df = pd.DataFrame(columns=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"])
+    # Enforce data types to prevent st.data_editor TypeError
+    df["total_usd"] = df["total_usd"].astype(float)
+    df["buyer_name"] = df["buyer_name"].astype(str)
+    df["destination_country"] = df["destination_country"].astype(str)
+    df["email"] = df["email"].astype(str)
+    df["phone"] = df["phone"].astype(str)
+    df["website"] = df["website"].astype(str)
+    df["address"] = df["address"].astype(str)
 
 # --- 1. BOSS VIEW METRICS ---
 total_companies = len(df)
