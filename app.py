@@ -32,7 +32,15 @@ df = get_data_from_db()
 
 # Initialize empty DF if needed to prevent errors
 if df.empty:
-    df = pd.DataFrame(columns=["buyer_name", "destination_country", "total_usd", "email", "phone", "website", "address"])
+    df = pd.DataFrame({
+        "buyer_name": pd.Series(dtype="str"),
+        "destination_country": pd.Series(dtype="str"),
+        "total_usd": pd.Series(dtype="float"),
+        "email": pd.Series(dtype="str"),
+        "phone": pd.Series(dtype="str"),
+        "website": pd.Series(dtype="str"),
+        "address": pd.Series(dtype="str")
+    })
 
 # --- 1. BOSS VIEW METRICS ---
 total_companies = len(df)
