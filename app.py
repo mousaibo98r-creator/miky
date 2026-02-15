@@ -41,6 +41,18 @@ if df.empty:
         "website": pd.Series(dtype="str"),
         "address": pd.Series(dtype="str")
     })
+else:
+    # Force types to prevent st.data_editor crashes (CRITICAL FIX)
+    try:
+        if "total_usd" in df.columns:
+            df["total_usd"] = pd.to_numeric(df["total_usd"], errors="coerce").fillna(0.0)
+        
+        string_cols = ["buyer_name", "destination_country", "email", "phone", "website", "address"]
+        for col in string_cols:
+            if col in df.columns:
+                df[col] = df[col].astype(str).replace("nan", "").replace("None", "")
+    except Exception as e:
+        logging.error(f"Data type enforcement failed: {e}")
 
 # --- 1. BOSS VIEW METRICS ---
 total_companies = len(df)
